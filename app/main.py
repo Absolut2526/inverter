@@ -16,6 +16,7 @@ from app.bot.handlers import router as bot_router
 from app.bot.notifier import send_alert_to_subscribers
 from app.collectors.simulator import TelemetrySimulator
 from app.collectors.solarman_api import SolarmanApiClient
+from app.collectors.deye_cloud import DeyeCloudClient
 from app.config import settings
 from app.state import app_state
 
@@ -39,7 +40,8 @@ polling_task: asyncio.Task | None = None
 async def run_telemetry_loop():
     """Background polling loop for Deye telemetry."""
     simulator = TelemetrySimulator()
-    solarman = SolarmanApiClient() if settings.is_solarman_configured else None
+    deye_client = DeyeCloudClient() if (settings.DEYE_ENABLED and settings.is_deye_configured) else None
+    solarman = SolarmanApiClient() if (settings.SOLARMAN_ENABLED and settings.is_solarman_configured) else None
 
     # Pre-populate some history points for the chart
     for _ in range(30):
@@ -48,22 +50,26 @@ async def run_telemetry_loop():
             from_telemetry_to_history(dummy)
         )
 
-    logger.info(
-        f"Telemetry loop started. Mode: {'Solarman Open API' if solarman else 'Simulator/Push'}"
-    )
+    mode_label = "Deye Cloud OpenAPI" if deye_client else ("Solarman Open API" if solarman else "Simulator/Demo")
+    logger.info(f"Telemetry loop started. Mode: {mode_label}")
 
-    interval = 15 if solarman else 3  # Faster updates in demo/push mode
+    interval = 15 if (deye_client or solarman) else 3  # Faster updates in demo/push mode
 
     while True:
         try:
             telemetry = None
-            if solarman and settings.SOLARMAN_ENABLED:
+            if deye_client:
+                telemetry = await deye_client.fetch_current_data()
+                if not telemetry:
+                    logger.warning("Deye Cloud fetch returned empty, using fallback")
+
+            if not telemetry and solarman:
                 telemetry = await solarman.fetch_current_data()
                 if not telemetry:
                     logger.warning("Solarman fetch failed, keeping previous state")
 
             if not telemetry:
-                # Use simulator if Solarman not enabled or as fallback
+                # Use simulator if cloud not enabled/configured or during fallback
                 telemetry = simulator.generate()
 
             await app_state.update_telemetry(telemetry)

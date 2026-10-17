@@ -16,17 +16,17 @@ services:
         sync: false
       - key: WEB_BASE_URL
         sync: false
-      - key: SOLARMAN_ENABLED
+      - key: DEYE_ENABLED
         value: "true"
-      - key: SOLARMAN_APP_ID
+      - key: DEYE_APP_ID
         sync: false
-      - key: SOLARMAN_APP_SECRET
+      - key: DEYE_APP_SECRET
         sync: false
-      - key: SOLARMAN_EMAIL
+      - key: DEYE_EMAIL
         sync: false
-      - key: SOLARMAN_PASSWORD
+      - key: DEYE_PASSWORD
         sync: false
-      - key: SOLARMAN_INVERTER_SN
+      - key: DEYE_DEVICE_SN
         sync: false
       - key: SECRET_PUSH_TOKEN
         generateValue: true

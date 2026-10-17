@@ -70,7 +70,14 @@ def format_status_message(t: SystemTelemetry) -> str:
     load_w = int(t.load.power)
 
     # Source tag
-    source_tag = "🌐 Solarman Cloud" if t.source == "solarman_api" else ("📡 Локальний шлюз" if t.source == "local_push" else "🧪 Демо-режим (Симуляція)")
+    if t.source == "deye_cloud":
+        source_tag = "🌐 Deye Cloud"
+    elif t.source == "solarman_api":
+        source_tag = "🌐 Solarman Cloud"
+    elif t.source == "local_push":
+        source_tag = "📡 Локальний шлюз"
+    else:
+        source_tag = "🧪 Демо-режим (Симуляція)"
 
     msg = (
         f"☀️ <b>СТАНЦІЯ DEYE HYBRID</b> | 🕒 {now_str}\n"

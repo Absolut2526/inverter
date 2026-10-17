@@ -15,7 +15,15 @@ class Settings(BaseSettings):
     WEB_BASE_URL: str = Field(default="http://localhost:8000", description="Public URL of the dashboard")
     SECRET_PUSH_TOKEN: str = Field(default="deye-secure-token-12345", description="Token for POST /api/telemetry")
 
-    # Solarman Cloud API
+    # Deye Cloud OpenAPI (https://developer.deyecloud.com)
+    DEYE_ENABLED: bool = Field(default=True)
+    DEYE_APP_ID: str = Field(default="")
+    DEYE_APP_SECRET: str = Field(default="")
+    DEYE_EMAIL: str = Field(default="")
+    DEYE_PASSWORD: str = Field(default="")
+    DEYE_DEVICE_SN: str = Field(default="")
+
+    # Solarman Cloud API (якщо використовується Solarman)
     SOLARMAN_ENABLED: bool = Field(default=False)
     SOLARMAN_APP_ID: str = Field(default="")
     SOLARMAN_APP_SECRET: str = Field(default="")
@@ -44,6 +52,14 @@ class Settings(BaseSettings):
             if x.isdigit() or (x.startswith("-") and x[1:].isdigit()):
                 ids.append(int(x))
         return ids
+
+    @property
+    def is_deye_configured(self) -> bool:
+        app_id = self.DEYE_APP_ID or self.SOLARMAN_APP_ID
+        app_secret = self.DEYE_APP_SECRET or self.SOLARMAN_APP_SECRET
+        email = self.DEYE_EMAIL or self.SOLARMAN_EMAIL
+        password = self.DEYE_PASSWORD or self.SOLARMAN_PASSWORD
+        return bool(app_id and app_secret and email and password)
 
     @property
     def is_solarman_configured(self) -> bool:
