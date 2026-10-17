@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from collections import deque
 from datetime import datetime
 from typing import Callable, Coroutine, Dict, List, Optional, Set
@@ -24,6 +25,11 @@ class AppState:
         self.alerted_batt_low_20: bool = False
         self.alerted_batt_low_10: bool = False
         self.alerted_batt_full: bool = False
+
+        # Blackout debouncing: wait 60 seconds to confirm true outage
+        self.blackout_pending_task: Optional[asyncio.Task] = None
+        self.blackout_confirmed: bool = False
+        self.blackout_start_time: Optional[float] = None
 
         # Alert callback hook: async def hook(chat_ids: Set[int], title: str, text: str)
         self.alert_callback: Optional[Callable[[Set[int], str, str], Coroutine]] = None
@@ -83,6 +89,39 @@ class AppState:
         # Check for alert conditions
         await self._check_alerts(telemetry)
 
+    async def _confirm_blackout_after_delay(self, delay_seconds: int = 60):
+        """Waits delay_seconds and checks if grid is still offline before alerting."""
+        try:
+            logger.info(f"Grid offline detected. Waiting {delay_seconds}s to verify true outage...")
+            await asyncio.sleep(delay_seconds)
+
+            if self.latest_telemetry and not self.latest_telemetry.grid.is_online:
+                self.blackout_confirmed = True
+                telemetry = self.latest_telemetry
+                soc = telemetry.battery.total_soc
+                load_val = telemetry.load.power
+                load_str = f"{(load_val / 1000.0):.2f} кВт" if load_val >= 1000.0 else f"{int(round(load_val))} Вт"
+                hours_str = f"{telemetry.battery.estimated_remaining_hours} год" if telemetry.battery.estimated_remaining_hours else "кілька годин"
+
+                title = "⚠️ ЗНИКЛО СВІТЛО В МЕРЕЖІ!"
+                text = (
+                    f"🚨 <b>УВАГА: Мережа 220В вимкнена (Блекаут)!</b>\n"
+                    f"<i>(Відсутність напруги підтверджено > 1 хв)</i>\n\n"
+                    f"⚡ Інвертор перейшов на автономне живлення від акумуляторів.\n"
+                    f"🔋 Поточний заряд: <b>{soc:.1f}%</b>\n"
+                    f"🏠 Навантаження будинку: <b>{load_str}</b>\n"
+                    f"⏳ Орієнтовний час роботи: ~<b>{hours_str}</b>"
+                )
+                logger.info("Blackout confirmed (>60s). Sending alert to subscribers.")
+                if self.alert_callback and self.subscriber_chat_ids:
+                    await self.alert_callback(self.subscriber_chat_ids, title, text)
+            else:
+                logger.info("Grid restored within 60s. Outage notification suppressed.")
+        except asyncio.CancelledError:
+            logger.info("Blackout verification task cancelled (power quickly restored).")
+        finally:
+            self.blackout_pending_task = None
+
     async def _check_alerts(self, telemetry: SystemTelemetry):
         if not self.alert_callback or not self.subscriber_chat_ids:
             return
@@ -90,31 +129,49 @@ class AppState:
         grid_online = telemetry.grid.is_online
         soc = telemetry.battery.total_soc
 
-        # 1. Grid Disconnected / Blackout
-        if self.last_grid_online is True and grid_online is False:
-            title = "⚠️ ЗНИКЛО СВІТЛО В МЕРЕЖІ!"
-            load_val = telemetry.load.power
-            load_str = f"{(load_val / 1000.0):.2f} кВт" if load_val >= 1000.0 else f"{int(round(load_val))} Вт"
-            hours_str = f"{telemetry.battery.estimated_remaining_hours} год" if telemetry.battery.estimated_remaining_hours else "кілька годин"
-            text = (
-                f"🚨 <b>УВАГА: Мережа 220В вимкнена (Блекаут)!</b>\n\n"
-                f"⚡ Інвертор перейшов на автономне живлення від акумуляторів.\n"
-                f"🔋 Поточний заряд: <b>{soc:.1f}%</b>\n"
-                f"🏠 Навантаження будинку: <b>{load_str}</b>\n"
-                f"⏳ Орієнтовний час роботи: ~<b>{hours_str}</b>"
-            )
-            asyncio.create_task(self.alert_callback(self.subscriber_chat_ids, title, text))
+        # First run initialization
+        if self.last_grid_online is None:
+            self.last_grid_online = grid_online
+            return
 
-        # 2. Grid Restored
+        # 1. Grid Disconnected (from online -> offline)
+        if self.last_grid_online is True and grid_online is False:
+            self.blackout_start_time = time.time()
+            if self.blackout_pending_task and not self.blackout_pending_task.done():
+                self.blackout_pending_task.cancel()
+            self.blackout_pending_task = asyncio.create_task(self._confirm_blackout_after_delay(60))
+
+        # 2. Grid Restored (from offline -> online)
         elif self.last_grid_online is False and grid_online is True:
-            title = "✅ СВІТЛО ПОВЕРНУЛОСЯ!"
-            text = (
-                f"🎉 <b>Чудова новина: Напруга в мережі відновлена!</b>\n\n"
-                f"🔌 Напруга мережі: <b>{telemetry.grid.voltage:.1f} В</b> ({telemetry.grid.frequency:.1f} Гц)\n"
-                f"🔋 Заряд акумуляторів: <b>{soc:.1f}%</b>\n"
-                f"⚡ Інвертор розпочав синхронізацію та живлення будинку."
-            )
-            asyncio.create_task(self.alert_callback(self.subscriber_chat_ids, title, text))
+            # If outage lasted less than 60s, cancel pending alert (suppresses false alarm!)
+            if self.blackout_pending_task and not self.blackout_pending_task.done():
+                self.blackout_pending_task.cancel()
+                self.blackout_pending_task = None
+                logger.info("Micro-outage (<60s) resolved. False alarm suppressed.")
+
+            # Only notify if outage was confirmed and announced
+            if self.blackout_confirmed:
+                self.blackout_confirmed = False
+                dur_text = ""
+                if self.blackout_start_time:
+                    elapsed_min = int((time.time() - self.blackout_start_time) / 60)
+                    if elapsed_min >= 60:
+                        h = elapsed_min // 60
+                        m = elapsed_min % 60
+                        dur_text = f"\n⏱️ Тривалість відключення: <b>{h} год {m} хв</b>"
+                    elif elapsed_min > 0:
+                        dur_text = f"\n⏱️ Тривалість відключення: <b>~{elapsed_min} хв</b>"
+
+                title = "✅ СВІТЛО ПОВЕРНУЛОСЯ!"
+                text = (
+                    f"🎉 <b>Чудова новина: Напруга в мережі відновлена!</b>\n\n"
+                    f"🔌 Напруга мережі: <b>{telemetry.grid.voltage:.1f} В</b> ({telemetry.grid.frequency:.1f} Гц)\n"
+                    f"🔋 Заряд акумуляторів: <b>{soc:.1f}%</b>\n"
+                    f"⚡ Інвертор розпочав синхронізацію та живлення будинку.{dur_text}"
+                )
+                asyncio.create_task(self.alert_callback(self.subscriber_chat_ids, title, text))
+
+            self.blackout_start_time = None
 
         self.last_grid_online = grid_online
 
