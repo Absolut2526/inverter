@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
@@ -14,6 +15,7 @@ from aiogram.types import (
 from app.config import settings
 from app.models import SystemTelemetry
 from app.state import app_state
+from app.collectors.charge_controller import charge_controller
 
 logger = logging.getLogger("telegram_handlers")
 router = Router()
@@ -208,11 +210,37 @@ def format_alerts_dashboard(chat_id: int) -> str:
         f"🔔 <b>ЦЕНТР КЕРУВАННЯ СПОВІЩЕННЯМИ</b>\n\n"
         f"Статус підписки: <b>{status_icon}</b>\n\n"
         f"🎯 <b>Активні типи сповіщень:</b>\n"
-        f"• 🚨 <b>Вимкнення світла 220В (Блекаут):</b> миттєве повідомлення про перехід на батареї\n"
-        f"• 🔌 <b>Повернення напруги в мережі:</b> повідомлення про відновлення 220В\n"
+        f"• 🚨 <b>Вимкнення світла 220В (Блекаут):</b> перевірка 1 хв для захисту від помилкових тривог\n"
+        f"• 🔌 <b>Повернення напруги в мережі:</b> повідомлення з тривалістю відключення\n"
         f"• 🪫 <b>Захист від розряду (<20% та <10%):</b> попередження зменшити навантаження\n"
         f"• 🔋 <b>Повний заряд (100%):</b> повідомлення про готовність резерву\n\n"
         f"<i>Натисніть кнопку нижче, щоб увімкнути або вимкнути сповіщення:</i>"
+    )
+
+
+def format_charge_dashboard(t: SystemTelemetry) -> str:
+    now_str = datetime.now().strftime("%H:%M:%S")
+
+    if charge_controller.is_force_charging:
+        status_text = "⚡ <b>АКТИВНО: Йде примусове заряджання від мережі 220В</b>"
+        if charge_controller.force_charge_end_time:
+            left_min = max(1, int((charge_controller.force_charge_end_time - time.time()) / 60))
+            timer_text = f"⏳ Залишилося часу за таймером: <b>~{left_min} хв</b>\n"
+        else:
+            timer_text = f"🎯 Цільовий рівень заряду: <b>{charge_controller.force_charge_target_soc:.0f}%</b>\n"
+    else:
+        status_text = "💤 <b>НЕАКТИВНО (Звичайний автономний режим Self-Use)</b>"
+        timer_text = ""
+
+    night_status = "🟢 <b>УВІМКНЕНО (23:00 - 07:00)</b>" if charge_controller.night_charge_enabled else "⚪ <b>ВИМКНЕНО</b>"
+
+    return (
+        f"🔌 <b>КЕРУВАННЯ ЗАРЯДЖАННЯМ ВІД МЕРЕЖІ 220В</b> | 🕒 {now_str}\n\n"
+        f"🔋 <b>Поточний заряд батарей:</b> [{make_progress_bar(t.battery.total_soc)}] <b>{t.battery.total_soc:.1f}%</b>\n"
+        f"⚡ <b>Стан заряду від мережі:</b> {status_text}\n"
+        f"{timer_text}"
+        f"🌙 <b>Нічний тариф (Нічний заряд):</b> {night_status}\n\n"
+        f"💡 <i>Ви можете примусово підзарядити акумулятори перед очікуваним відключенням світла або активувати нічний заряд за 50% тарифом. Оберіть дію нижче:</i>"
     )
 
 
@@ -225,6 +253,32 @@ def get_safe_web_url() -> str:
     if not url or "localhost" in url or not url.startswith("https://"):
         return "https://solarsystem67.onrender.com"
     return url
+
+
+def get_charge_inline_keyboard() -> InlineKeyboardMarkup:
+    night_label = "🌙 Вимкнути нічний тариф" if charge_controller.night_charge_enabled else "🌙 Увімкнути нічний тариф (23:00 - 07:00)"
+    stop_label = "⏹️ Зупинити заряд від 220В" if charge_controller.is_force_charging else "⏹️ Режим Self-Use (Стандарт)"
+
+    rows = [
+        [
+            InlineKeyboardButton(text="⚡ Зарядити зараз (до 100%)", callback_data="charge_now_100"),
+        ],
+        [
+            InlineKeyboardButton(text="⏱️ Заряд на 1 год", callback_data="charge_hours_1"),
+            InlineKeyboardButton(text="⏱️ Заряд на 2 год", callback_data="charge_hours_2"),
+        ],
+        [
+            InlineKeyboardButton(text=night_label, callback_data="toggle_night_charge"),
+        ],
+        [
+            InlineKeyboardButton(text=stop_label, callback_data="charge_stop"),
+        ],
+        [
+            InlineKeyboardButton(text="⚡ Головна панель", callback_data="tab_main"),
+            InlineKeyboardButton(text="🔋 Батареї", callback_data="tab_battery"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_panel_inline_keyboard(active_tab: str = "main") -> InlineKeyboardMarkup:
@@ -252,7 +306,7 @@ def get_panel_inline_keyboard(active_tab: str = "main") -> InlineKeyboardMarkup:
         # Action Row
         [
             InlineKeyboardButton(text="🔄 Оновити дані", callback_data=f"refresh_{active_tab}"),
-            InlineKeyboardButton(text="🔔 Сповіщення", callback_data="tab_alerts"),
+            InlineKeyboardButton(text="🔌 Заряд від 220В", callback_data="tab_charge"),
         ],
         # Tabs Row
         [
@@ -262,6 +316,9 @@ def get_panel_inline_keyboard(active_tab: str = "main") -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text=tab_solar, callback_data="tab_solar"),
             InlineKeyboardButton(text=tab_stats, callback_data="tab_stats"),
+        ],
+        [
+            InlineKeyboardButton(text="🔔 Сповіщення", callback_data="tab_alerts"),
         ],
         # WebApp / Link Button
         [web_button],
@@ -276,11 +333,14 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
             KeyboardButton(text="🔋 Батареї (2 шт)"),
         ],
         [
-            KeyboardButton(text="☀️ Сонячні панелі"),
+            KeyboardButton(text="🔌 Заряд від мережі"),
             KeyboardButton(text="📊 Енергобаланс"),
         ],
         [
+            KeyboardButton(text="☀️ Сонячні панелі"),
             KeyboardButton(text="🔔 Центр сповіщень"),
+        ],
+        [
             KeyboardButton(text="📱 Відкрити сайт"),
         ],
     ]
@@ -366,6 +426,20 @@ async def cmd_stats(message: Message):
         format_stats_dashboard(t),
         parse_mode="HTML",
         reply_markup=get_panel_inline_keyboard("stats"),
+    )
+
+
+@router.message(Command("charge"))
+@router.message(F.text == "🔌 Заряд від мережі")
+async def cmd_charge(message: Message):
+    t = app_state.latest_telemetry
+    if not t:
+        await message.answer("⏳ Очікуємо надходження даних з інвертора...")
+        return
+    await message.answer(
+        format_charge_dashboard(t),
+        parse_mode="HTML",
+        reply_markup=get_charge_inline_keyboard(),
     )
 
 
@@ -568,3 +642,105 @@ async def cb_toggle_alerts(call: CallbackQuery):
     except Exception:
         pass
     await call.answer(msg_pop, show_alert=True)
+
+
+# =========================================================================
+# CHARGE CONTROLLER CALLBACKS
+# =========================================================================
+
+@router.callback_query(F.data == "tab_charge")
+async def cb_tab_charge(call: CallbackQuery):
+    t = app_state.latest_telemetry
+    if not t:
+        await call.answer("Очікуємо дані...")
+        return
+    try:
+        await call.message.edit_text(
+            format_charge_dashboard(t),
+            parse_mode="HTML",
+            reply_markup=get_charge_inline_keyboard(),
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "charge_now_100")
+async def cb_charge_now_100(call: CallbackQuery):
+    await charge_controller.start_force_charge(target_soc=100.0)
+    t = app_state.latest_telemetry
+    if t:
+        try:
+            await call.message.edit_text(
+                format_charge_dashboard(t),
+                parse_mode="HTML",
+                reply_markup=get_charge_inline_keyboard(),
+            )
+        except Exception:
+            pass
+    await call.answer("⚡ Заряджання розпочато! Батареї заряджаються від 220В до 100%.", show_alert=True)
+
+
+@router.callback_query(F.data == "charge_hours_1")
+async def cb_charge_hours_1(call: CallbackQuery):
+    await charge_controller.start_force_charge(target_soc=100.0, duration_hours=1.0)
+    t = app_state.latest_telemetry
+    if t:
+        try:
+            await call.message.edit_text(
+                format_charge_dashboard(t),
+                parse_mode="HTML",
+                reply_markup=get_charge_inline_keyboard(),
+            )
+        except Exception:
+            pass
+    await call.answer("⏱️ Заряджання на 1 годину активовано! Зупиниться автоматично.", show_alert=True)
+
+
+@router.callback_query(F.data == "charge_hours_2")
+async def cb_charge_hours_2(call: CallbackQuery):
+    await charge_controller.start_force_charge(target_soc=100.0, duration_hours=2.0)
+    t = app_state.latest_telemetry
+    if t:
+        try:
+            await call.message.edit_text(
+                format_charge_dashboard(t),
+                parse_mode="HTML",
+                reply_markup=get_charge_inline_keyboard(),
+            )
+        except Exception:
+            pass
+    await call.answer("⏱️ Заряджання на 2 години активовано! Зупиниться автоматично.", show_alert=True)
+
+
+@router.callback_query(F.data == "toggle_night_charge")
+async def cb_toggle_night_charge(call: CallbackQuery):
+    enabled = charge_controller.toggle_night_schedule()
+    t = app_state.latest_telemetry
+    if t:
+        try:
+            await call.message.edit_text(
+                format_charge_dashboard(t),
+                parse_mode="HTML",
+                reply_markup=get_charge_inline_keyboard(),
+            )
+        except Exception:
+            pass
+    msg = "🌙 Нічний заряд увімкнено (23:00 - 07:00)" if enabled else "⚪ Нічний заряд вимкнено"
+    await call.answer(msg, show_alert=True)
+
+
+@router.callback_query(F.data == "charge_stop")
+async def cb_charge_stop(call: CallbackQuery):
+    await charge_controller.stop_force_charge()
+    t = app_state.latest_telemetry
+    if t:
+        try:
+            await call.message.edit_text(
+                format_charge_dashboard(t),
+                parse_mode="HTML",
+                reply_markup=get_charge_inline_keyboard(),
+            )
+        except Exception:
+            pass
+    await call.answer("⏹️ Заряд від мережі зупинено. Інвертор повернуто в Self-Use.", show_alert=True)
