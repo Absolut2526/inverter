@@ -9,6 +9,7 @@ from aiogram.types import (
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 from app.config import settings
 from app.models import SystemTelemetry
@@ -25,23 +26,37 @@ def make_progress_bar(percent: float, length: int = 10) -> str:
     return "█" * filled + "░" * empty
 
 
-def format_status_message(t: SystemTelemetry) -> str:
+def get_source_label(source: str) -> str:
+    if source == "deye_cloud":
+        return "🌐 Deye Cloud"
+    elif source == "solarman_api":
+        return "🌐 Solarman Cloud"
+    elif source == "local_push":
+        return "📡 Локальний шлюз"
+    return "🧪 Демо-режим (Симуляція)"
+
+
+# =========================================================================
+# DASHBOARD FORMATTERS
+# =========================================================================
+
+def format_main_dashboard(t: SystemTelemetry) -> str:
     now_str = datetime.now().strftime("%H:%M:%S")
 
-    # Grid icon & label
+    # Grid status
     if t.grid.is_online:
-        grid_line = f"🟢 <b>Мережа 220В: Є СВІТЛО</b> ({t.grid.voltage:.1f} В, {t.grid.frequency:.1f} Гц)"
+        grid_status_line = f"🟢 <b>Мережа 220В: Є СВІТЛО</b> ({t.grid.voltage:.1f} В, {t.grid.frequency:.1f} Гц)"
         if t.grid.power > 30:
-            grid_flow = f"   📥 Споживання з мережі: <b>{int(t.grid.power)} Вт</b>"
+            grid_flow = f"   📥 Імпорт з мережі: <b>{int(t.grid.power)} Вт</b>"
         elif t.grid.power < -30:
             grid_flow = f"   📤 Експорт в мережу: <b>{int(abs(t.grid.power))} Вт</b>"
         else:
             grid_flow = "   ⚖️ Мережа в нульовому балансі"
     else:
-        grid_line = "🔴 <b>Мережа 220В: БЛЕКАУТ / ВІДКЛЮЧЕНО</b>"
+        grid_status_line = "🔴 <b>Мережа 220В: БЛЕКАУТ / ВІДКЛЮЧЕНО</b>"
         grid_flow = "   ⚠️ Живлення виключно від акумуляторів і сонця"
 
-    # Battery Status
+    # Battery mode
     batt_w = int(t.battery.total_power)
     if batt_w > 20:
         batt_mode = f"⚡ <b>Заряджається</b> (+{batt_w} Вт)"
@@ -55,74 +70,205 @@ def format_status_message(t: SystemTelemetry) -> str:
         action = "розряду" if batt_w < -20 else "заряду"
         time_remain = f"\n   ⏳ Час до {action}: ~<b>{t.battery.estimated_remaining_hours} год</b>"
 
-    # Sub-batteries
-    batt_details = ""
+    # Batteries overview
+    batt_blocks = ""
     for b in t.battery.batteries:
-        b_bar = make_progress_bar(b.soc, 6)
-        batt_details += f"\n   • <b>{b.name}</b>: [{b_bar}] <b>{b.soc:.1f}%</b> ({b.voltage:.1f}В, {b.temperature:.1f}°C)"
+        bar = make_progress_bar(b.soc, 5)
+        batt_blocks += f"\n   • <b>{b.name}</b>: [{bar}] <b>{b.soc:.1f}%</b> ({b.voltage:.1f}В, {b.temperature:.1f}°C)"
 
-    # Solar power
-    solar_total = int(t.solar.total_power)
-    pv1_w = int(t.solar.pv1_power)
-    pv2_w = int(t.solar.pv2_power)
-
-    # Home load
-    load_w = int(t.load.power)
-
-    # Source tag
-    if t.source == "deye_cloud":
-        source_tag = "🌐 Deye Cloud"
-    elif t.source == "solarman_api":
-        source_tag = "🌐 Solarman Cloud"
-    elif t.source == "local_push":
-        source_tag = "📡 Локальний шлюз"
-    else:
-        source_tag = "🧪 Демо-режим (Симуляція)"
-
-    msg = (
-        f"☀️ <b>СТАНЦІЯ DEYE HYBRID</b> | 🕒 {now_str}\n"
-        f"<i>Джерело: {source_tag}</i>\n\n"
-        f"☀️ <b>СОНЯЧНІ ПАНЕЛІ: {solar_total} Вт</b>\n"
-        f"   • PV1 (Схід/Південь): {pv1_w} Вт ({t.solar.pv1_voltage:.1f}В, {t.solar.pv1_current:.1f}А)\n"
-        f"   • PV2 (Захід): {pv2_w} Вт ({t.solar.pv2_voltage:.1f}В, {t.solar.pv2_current:.1f}А)\n"
-        f"   • Генерація за сьогодні: <b>{t.solar.daily_energy:.2f} кВт⋅год</b>\n\n"
-        f"🔋 <b>БАТАРЕЇ: {t.battery.total_soc:.1f}%</b> [{make_progress_bar(t.battery.total_soc)}]\n"
+    return (
+        f"⚡ <b>ГОЛОВНА ПАНЕЛЬ DEYE HYBRID</b> | 🕒 {now_str}\n"
+        f"<i>Джерело: {get_source_label(t.source)}</i>\n\n"
+        f"☀️ <b>СОНЯЧНІ ПАНЕЛІ: {int(t.solar.total_power)} Вт</b>\n"
+        f"   • PV1: {int(t.solar.pv1_power)} Вт | PV2: {int(t.solar.pv2_power)} Вт\n"
+        f"   • Генерація сьогодні: <b>{t.solar.daily_energy:.2f} кВт⋅год</b>\n\n"
+        f"🔋 <b>БАТАРЕЇ (2 БЛОКИ): {t.battery.total_soc:.1f}%</b> [{make_progress_bar(t.battery.total_soc)}]\n"
         f"   • Режим: {batt_mode}\n"
-        f"   • Загальна напруга: {t.battery.voltage:.1f} В (струм: {t.battery.current:.1f} А){time_remain}{batt_details}\n\n"
-        f"🏠 <b>СПОЖИВАННЯ БУДИНКУ: {load_w} Вт</b>\n"
-        f"   • Спожито за день: <b>{t.load.daily_energy:.2f} кВт⋅год</b>\n\n"
-        f"{grid_line}\n"
+        f"   • Шина DC: {t.battery.voltage:.1f} В (струм: {t.battery.current:.1f} А){time_remain}{batt_blocks}\n\n"
+        f"🏠 <b>СПОЖИВАННЯ БУДИНКУ: {int(t.load.power)} Вт</b>\n"
+        f"   • Витрачено сьогодні: <b>{t.load.daily_energy:.2f} кВт⋅год</b>\n\n"
+        f"{grid_status_line}\n"
         f"{grid_flow}\n\n"
         f"🌡️ <b>Інвертор:</b> {t.inverter.temperature:.1f}°C | Режим: <code>{t.inverter.work_mode}</code>"
     )
-    return msg
 
 
-def get_status_inline_keyboard() -> InlineKeyboardMarkup:
+# Alias for backward compatibility
+format_status_message = format_main_dashboard
+
+
+def format_battery_dashboard(t: SystemTelemetry) -> str:
+    now_str = datetime.now().strftime("%H:%M:%S")
+    batt_w = int(t.battery.total_power)
+
+    if batt_w > 20:
+        action_text = f"⚡ <b>Заряджання:</b> +{batt_w} Вт"
+    elif batt_w < -20:
+        action_text = f"🔻 <b>Розряджання:</b> -{abs(batt_w)} Вт"
+    else:
+        action_text = "💤 <b>Режим очікування (Standby)</b>"
+
+    est_text = ""
+    if t.battery.estimated_remaining_hours:
+        action = "розряду" if batt_w < -20 else "заряду"
+        est_text = f"⏳ Орієнтовний час до повного {action}: <b>{t.battery.estimated_remaining_hours} год</b>\n"
+
+    cards = ""
+    for idx, b in enumerate(t.battery.batteries, 1):
+        bar = make_progress_bar(b.soc, 8)
+        cards += (
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"🔋 <b>{b.name} (Блок #{idx})</b>\n"
+            f"• Рівень заряду: [{bar}] <b>{b.soc:.1f}%</b>\n"
+            f"• Напруга: <b>{b.voltage:.2f} В</b> | Струм: <b>{b.current:.1f} А</b>\n"
+            f"• Потужність: <b>{int(b.power)} Вт</b>\n"
+            f"• Температура банок: <b>{b.temperature:.1f}°C</b>\n"
+            f"• Здоров'я батареї (SOH): <b>{b.soh:.0f}%</b> (Ідеальний)\n"
+        )
+
+    return (
+        f"🔋 <b>ДЕТАЛЬНА ПАНЕЛЬ АКУМУЛЯТОРІВ</b> | 🕒 {now_str}\n\n"
+        f"📊 <b>Загальний стан системи:</b>\n"
+        f"• Сумарний заряд: [{make_progress_bar(t.battery.total_soc)}] <b>{t.battery.total_soc:.1f}%</b>\n"
+        f"• Поточна робота: {action_text}\n"
+        f"• Напруга шини DC: <b>{t.battery.voltage:.2f} В</b>\n"
+        f"• Загальний струм: <b>{t.battery.current:.2f} А</b>\n"
+        f"{est_text}\n"
+        f"📈 <b>Денні підсумки батарей:</b>\n"
+        f"• Заряджено в АКБ за день: <b>{t.battery.daily_charge:.2f} кВт⋅год</b>\n"
+        f"• Віддано на будинок: <b>{t.battery.daily_discharge:.2f} кВт⋅год</b>\n\n"
+        f"{cards}"
+    )
+
+
+def format_solar_dashboard(t: SystemTelemetry) -> str:
+    now_str = datetime.now().strftime("%H:%M:%S")
+    pv_total = int(t.solar.total_power)
+
+    return (
+        f"☀️ <b>СОНЯЧНА ГЕНЕРАЦІЯ DEYE</b> | 🕒 {now_str}\n\n"
+        f"⚡ <b>Поточна сумарна потужність:</b> <b>{pv_total} Вт</b>\n\n"
+        f"📐 <b>Стрінг 1 (PV1 - Схід / Південь):</b>\n"
+        f"• Потужність: <b>{int(t.solar.pv1_power)} Вт</b>\n"
+        f"• Напруга: <b>{t.solar.pv1_voltage:.1f} В</b>\n"
+        f"• Струм: <b>{t.solar.pv1_current:.2f} А</b>\n\n"
+        f"📐 <b>Стрінг 2 (PV2 - Захід):</b>\n"
+        f"• Потужність: <b>{int(t.solar.pv2_power)} Вт</b>\n"
+        f"• Напруга: <b>{t.solar.pv2_voltage:.1f} В</b>\n"
+        f"• Струм: <b>{t.solar.pv2_current:.2f} А</b>\n\n"
+        f"📊 <b>Виробіток енергії:</b>\n"
+        f"• Згенеровано за сьогодні: <b>{t.solar.daily_energy:.2f} кВт⋅год</b>\n"
+        f"• За весь час експлуатації: <b>{t.solar.total_energy:.1f} кВт⋅год</b>"
+    )
+
+
+def format_stats_dashboard(t: SystemTelemetry) -> str:
+    now_str = datetime.now().strftime("%H:%M:%S")
+    solar_kwh = t.solar.daily_energy
+    load_kwh = t.load.daily_energy
+    grid_in = t.grid.daily_import
+    grid_out = t.grid.daily_export
+    batt_in = t.battery.daily_charge
+    batt_out = t.battery.daily_discharge
+
+    if load_kwh > 0:
+        self_suff = min(100.0, max(0.0, ((load_kwh - grid_in) / load_kwh) * 100.0))
+    else:
+        self_suff = 100.0
+
+    return (
+        f"📊 <b>ЕНЕРГОБАЛАНС ТА АНАЛІТИКА ДНЯ</b> | 🕒 {now_str}\n\n"
+        f"🌱 <b>Рівень енергонезалежності сьогодні:</b>\n"
+        f"[{make_progress_bar(self_suff, 10)}] <b>{self_suff:.1f}%</b>\n\n"
+        f"☀️ <b>Генерація сонця:</b> <b>{solar_kwh:.2f} кВт⋅год</b>\n"
+        f"🏠 <b>Споживання будинку:</b> <b>{load_kwh:.2f} кВт⋅год</b>\n\n"
+        f"🔋 <b>Акумулятори:</b>\n"
+        f"   • Заряджено: <b>+{batt_in:.2f} кВт⋅год</b>\n"
+        f"   • Розряджено: <b>-{batt_out:.2f} кВт⋅год</b>\n\n"
+        f"🌐 <b>Міська мережа 220В:</b>\n"
+        f"   • Куплено з мережі: <b>{grid_in:.2f} кВт⋅год</b>\n"
+        f"   • Віддано в мережу: <b>{grid_out:.2f} кВт⋅год</b>"
+    )
+
+
+def format_alerts_dashboard(chat_id: int) -> str:
+    is_subbed = chat_id in app_state.subscriber_chat_ids
+    status_icon = "🟢 УВІМКНЕНО" if is_subbed else "🔴 ВИМКНЕНО"
+
+    return (
+        f"🔔 <b>ЦЕНТР КЕРУВАННЯ СПОВІЩЕННЯМИ</b>\n\n"
+        f"Статус підписки: <b>{status_icon}</b>\n\n"
+        f"🎯 <b>Активні типи сповіщень:</b>\n"
+        f"• 🚨 <b>Вимкнення світла 220В (Блекаут):</b> миттєве повідомлення про перехід на батареї\n"
+        f"• 🔌 <b>Повернення напруги в мережі:</b> повідомлення про відновлення 220В\n"
+        f"• 🪫 <b>Захист від розряду (<20% та <10%):</b> попередження зменшити навантаження\n"
+        f"• 🔋 <b>Повний заряд (100%):</b> повідомлення про готовність резерву\n\n"
+        f"<i>Натисніть кнопку нижче, щоб увімкнути або вимкнути сповіщення:</i>"
+    )
+
+
+# =========================================================================
+# KEYBOARDS
+# =========================================================================
+
+def get_panel_inline_keyboard(active_tab: str = "main") -> InlineKeyboardMarkup:
     web_url = settings.WEB_BASE_URL.strip()
-    buttons = [
+    if not web_url.startswith("http"):
+        web_url = "https://solarsystem67.onrender.com"
+
+    # Tab labels with active indicator
+    tab_main = "⚡ Головна" if active_tab != "main" else "• ⚡ Головна •"
+    tab_battery = "🔋 Батареї" if active_tab != "battery" else "• 🔋 Батареї •"
+    tab_solar = "☀️ Сонце" if active_tab != "solar" else "• ☀️ Сонце •"
+    tab_stats = "📊 Баланс" if active_tab != "stats" else "• 📊 Баланс •"
+
+    rows = [
+        # Action Row
         [
-            InlineKeyboardButton(text="🔄 Оновити дані", callback_data="refresh_status"),
-            InlineKeyboardButton(text="📊 Денні підсумки", callback_data="view_stats"),
+            InlineKeyboardButton(text="🔄 Оновити дані", callback_data=f"refresh_{active_tab}"),
+            InlineKeyboardButton(text="🔔 Сповіщення", callback_data="tab_alerts"),
+        ],
+        # Tabs Row
+        [
+            InlineKeyboardButton(text=tab_main, callback_data="tab_main"),
+            InlineKeyboardButton(text=tab_battery, callback_data="tab_battery"),
+        ],
+        [
+            InlineKeyboardButton(text=tab_solar, callback_data="tab_solar"),
+            InlineKeyboardButton(text=tab_stats, callback_data="tab_stats"),
+        ],
+        # WebApp Fullscreen Button
+        [
+            InlineKeyboardButton(
+                text="📱 Відкрити WebApp дашборд",
+                web_app=WebAppInfo(url=web_url),
+            ),
         ],
     ]
-    if web_url and web_url.startswith("http"):
-        buttons.append([
-            InlineKeyboardButton(text="🌐 Відкрити веб-панель", url=web_url),
-        ])
-    buttons.append([
-        InlineKeyboardButton(text="🔔 Налаштування сповіщень", callback_data="toggle_alerts"),
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
     kb = [
-        [KeyboardButton(text="⚡ Поточний статус"), KeyboardButton(text="📊 Статистика")],
-        [KeyboardButton(text="🔔 Сповіщення"), KeyboardButton(text="🌐 Посилання на сайт")],
+        [
+            KeyboardButton(text="⚡ Головна панель"),
+            KeyboardButton(text="🔋 Батареї (2 шт)"),
+        ],
+        [
+            KeyboardButton(text="☀️ Сонячні панелі"),
+            KeyboardButton(text="📊 Енергобаланс"),
+        ],
+        [
+            KeyboardButton(text="🔔 Центр сповіщень"),
+            KeyboardButton(text="📱 Відкрити сайт"),
+        ],
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
+
+# =========================================================================
+# BOT COMMANDS & MESSAGE HANDLERS
+# =========================================================================
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
@@ -130,147 +276,249 @@ async def cmd_start(message: Message):
     app_state.add_subscriber(chat_id)
 
     intro = (
-        f"👋 <b>Привіт, {message.from_user.first_name or 'власнику'}!</b>\n\n"
-        f"Я твій бот для моніторингу сонячної електростанції <b>Deye</b> та 2 акумуляторів.\n\n"
-        f"✅ <b>Ви підключені до сповіщень:</b>\n"
-        f"• 🚨 Миттєве повідомлення, якщо вимкнуть світло 220В (Блекаут)\n"
-        f"• 🔌 Сповіщення, коли міська мережа знову з'явиться\n"
-        f"• 🪫 Попередження при розряді батарей (<20%)\n"
-        f"• 🔋 Повідомлення про 100% заряд батарей\n\n"
-        f"Ось поточний стан станції прямо зараз:"
+        f"👋 <b>Вітаю, {message.from_user.first_name or 'власнику'}!</b>\n\n"
+        f"Ваш персональний бот для моніторингу сонячної станції <b>Deye Hybrid + 2 АКБ</b> підключено!\n\n"
+        f"✅ <b>Автосповіщення про блекаути активовано.</b>\n"
+        f"Використовуйте зручну інформаційну панель та кнопки нижче для швидкої навігації 👇"
     )
 
     t = app_state.latest_telemetry
-    if t:
-        text = f"{intro}\n\n{format_status_message(t)}"
-    else:
-        text = f"{intro}\n\n<i>Зчитування перших даних з інвертора... Зачекайте декілька секунд.</i>"
+    content = format_main_dashboard(t) if t else "<i>Завантаження даних станції...</i>"
 
     await message.answer(
-        text,
+        f"{intro}\n\n{content}",
         parse_mode="HTML",
         reply_markup=get_main_reply_keyboard(),
     )
 
 
 @router.message(Command("status"))
-@router.message(F.text == "⚡ Поточний статус")
+@router.message(F.text == "⚡ Головна панель")
 async def cmd_status(message: Message):
     t = app_state.latest_telemetry
     if not t:
         await message.answer("⏳ Очікуємо надходження даних з інвертора...")
         return
-
     await message.answer(
-        format_status_message(t),
+        format_main_dashboard(t),
         parse_mode="HTML",
-        reply_markup=get_status_inline_keyboard(),
+        reply_markup=get_panel_inline_keyboard("main"),
+    )
+
+
+@router.message(Command("battery"))
+@router.message(F.text == "🔋 Батареї (2 шт)")
+async def cmd_battery(message: Message):
+    t = app_state.latest_telemetry
+    if not t:
+        await message.answer("⏳ Дані по батареях завантажуються...")
+        return
+    await message.answer(
+        format_battery_dashboard(t),
+        parse_mode="HTML",
+        reply_markup=get_panel_inline_keyboard("battery"),
+    )
+
+
+@router.message(Command("solar"))
+@router.message(F.text == "☀️ Сонячні панелі")
+async def cmd_solar(message: Message):
+    t = app_state.latest_telemetry
+    if not t:
+        await message.answer("⏳ Дані сонячних панелей завантажуються...")
+        return
+    await message.answer(
+        format_solar_dashboard(t),
+        parse_mode="HTML",
+        reply_markup=get_panel_inline_keyboard("solar"),
     )
 
 
 @router.message(Command("stats"))
-@router.message(F.text == "📊 Статистика")
+@router.message(F.text == "📊 Енергобаланс")
 async def cmd_stats(message: Message):
     t = app_state.latest_telemetry
     if not t:
-        await message.answer("⏳ Немає даних для формування статистики.")
+        await message.answer("⏳ Підрахунок денної статистики...")
         return
-
-    # Energy calculations
-    solar_kwh = t.solar.daily_energy
-    load_kwh = t.load.daily_energy
-    batt_in = t.battery.daily_charge
-    batt_out = t.battery.daily_discharge
-    grid_in = t.grid.daily_import
-    grid_out = t.grid.daily_export
-
-    # Self-sufficiency calculation
-    if load_kwh > 0:
-        self_suff = min(100.0, max(0.0, ((load_kwh - grid_in) / load_kwh) * 100.0))
-    else:
-        self_suff = 100.0
-
-    msg = (
-        f"📊 <b>ДЕННА СТАТИСТИКА ЕНЕРГІЇ</b>\n\n"
-        f"☀️ <b>Згенеровано сонячними панелями:</b> {solar_kwh:.2f} кВт⋅год\n"
-        f"🏠 <b>Спожито будинком:</b> {load_kwh:.2f} кВт⋅год\n\n"
-        f"🔋 <b>Батареї:</b>\n"
-        f"   • Заряджено: {batt_in:.2f} кВт⋅год\n"
-        f"   • Віддано на будинок: {batt_out:.2f} кВт⋅год\n\n"
-        f"🌐 <b>Мережа 220В:</b>\n"
-        f"   • Куплено з мережі: {grid_in:.2f} кВт⋅год\n"
-        f"   • Віддано в мережу: {grid_out:.2f} кВт⋅год\n\n"
-        f"🌱 <b>Рівень енергонезалежності сьогодні:</b> <b>{self_suff:.1f}%</b>\n"
+    await message.answer(
+        format_stats_dashboard(t),
+        parse_mode="HTML",
+        reply_markup=get_panel_inline_keyboard("stats"),
     )
-
-    await message.answer(msg, parse_mode="HTML", reply_markup=get_status_inline_keyboard())
 
 
 @router.message(Command("notify"))
-@router.message(F.text == "🔔 Сповіщення")
+@router.message(F.text == "🔔 Центр сповіщень")
 async def cmd_notify(message: Message):
     chat_id = message.chat.id
-    if chat_id in app_state.subscriber_chat_ids:
-        app_state.remove_subscriber(chat_id)
-        status_text = "🔕 <b>Сповіщення вимкнено.</b> Ви більше не отримуватимете автоповідомлень про зникнення світла."
-    else:
-        app_state.add_subscriber(chat_id)
-        status_text = "🔔 <b>Сповіщення увімкнено!</b> Ви миттєво дізнаватиметеся про блекаути, повернення напруги та низький заряд батареї."
+    is_subbed = chat_id in app_state.subscriber_chat_ids
+    toggle_text = "🔕 Вимкнути сповіщення" if is_subbed else "🔔 Увімкнути сповіщення"
 
-    await message.answer(status_text, parse_mode="HTML")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=toggle_text, callback_data="toggle_alerts")],
+            [InlineKeyboardButton(text="⚡ До головної панелі", callback_data="tab_main")],
+        ]
+    )
+    await message.answer(
+        format_alerts_dashboard(chat_id),
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
 
 
-@router.message(F.text == "🌐 Посилання на сайт")
+@router.message(F.text == "📱 Відкрити сайт")
 async def cmd_website(message: Message):
-    url = settings.WEB_BASE_URL.strip()
-    if url.startswith("http"):
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🚀 Відкрити веб-дашборд", url=url)]]
-        )
-        await message.answer(f"🌐 Посилання на ваш онлайн-моніторинг:\n{url}", reply_markup=kb)
-    else:
-        await message.answer(f"Адреса моніторингу: <code>{url}</code>")
+    web_url = settings.WEB_BASE_URL.strip()
+    if not web_url.startswith("http"):
+        web_url = "https://solarsystem67.onrender.com"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🚀 Відкрити WebApp прямо тут",
+                    web_app=WebAppInfo(url=web_url),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🌐 Відкрити у браузері",
+                    url=web_url,
+                )
+            ],
+        ]
+    )
+    await message.answer(
+        f"🌐 <b>Онлайн-дашборд сонячної станції:</b>\n<code>{web_url}</code>",
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
 
 
-@router.callback_query(F.data == "refresh_status")
-async def cb_refresh_status(call: CallbackQuery):
+# =========================================================================
+# INTERACTIVE CALLBACK QUERY HANDLERS (TAB SWITCHING IN-PLACE)
+# =========================================================================
+
+@router.callback_query(F.data == "tab_main")
+async def cb_tab_main(call: CallbackQuery):
     t = app_state.latest_telemetry
     if not t:
         await call.answer("Очікуємо дані...")
         return
-    text = format_status_message(t)
+    try:
+        await call.message.edit_text(
+            format_main_dashboard(t),
+            parse_mode="HTML",
+            reply_markup=get_panel_inline_keyboard("main"),
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "tab_battery")
+async def cb_tab_battery(call: CallbackQuery):
+    t = app_state.latest_telemetry
+    if not t:
+        await call.answer("Очікуємо дані...")
+        return
+    try:
+        await call.message.edit_text(
+            format_battery_dashboard(t),
+            parse_mode="HTML",
+            reply_markup=get_panel_inline_keyboard("battery"),
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "tab_solar")
+async def cb_tab_solar(call: CallbackQuery):
+    t = app_state.latest_telemetry
+    if not t:
+        await call.answer("Очікуємо дані...")
+        return
+    try:
+        await call.message.edit_text(
+            format_solar_dashboard(t),
+            parse_mode="HTML",
+            reply_markup=get_panel_inline_keyboard("solar"),
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "tab_stats")
+async def cb_tab_stats(call: CallbackQuery):
+    t = app_state.latest_telemetry
+    if not t:
+        await call.answer("Очікуємо дані...")
+        return
+    try:
+        await call.message.edit_text(
+            format_stats_dashboard(t),
+            parse_mode="HTML",
+            reply_markup=get_panel_inline_keyboard("stats"),
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "tab_alerts")
+async def cb_tab_alerts(call: CallbackQuery):
+    chat_id = call.message.chat.id
+    is_subbed = chat_id in app_state.subscriber_chat_ids
+    toggle_text = "🔕 Вимкнути сповіщення" if is_subbed else "🔔 Увімкнути сповіщення"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=toggle_text, callback_data="toggle_alerts")],
+            [InlineKeyboardButton(text="⚡ До головної панелі", callback_data="tab_main")],
+        ]
+    )
+    try:
+        await call.message.edit_text(
+            format_alerts_dashboard(chat_id),
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("refresh_"))
+async def cb_refresh_tab(call: CallbackQuery):
+    tab = call.data.replace("refresh_", "")
+    t = app_state.latest_telemetry
+    if not t:
+        await call.answer("Дані завантажуються...")
+        return
+
+    text = ""
+    if tab == "battery":
+        text = format_battery_dashboard(t)
+    elif tab == "solar":
+        text = format_solar_dashboard(t)
+    elif tab == "stats":
+        text = format_stats_dashboard(t)
+    else:
+        text = format_main_dashboard(t)
+
     try:
         await call.message.edit_text(
             text,
             parse_mode="HTML",
-            reply_markup=get_status_inline_keyboard(),
+            reply_markup=get_panel_inline_keyboard(tab),
         )
         await call.answer("✅ Дані оновлено!")
     except Exception:
-        await call.answer("Дані вже актуальні")
-
-
-@router.callback_query(F.data == "view_stats")
-async def cb_view_stats(call: CallbackQuery):
-    t = app_state.latest_telemetry
-    if not t:
-        await call.answer("Очікуємо дані...")
-        return
-    solar_kwh = t.solar.daily_energy
-    load_kwh = t.load.daily_energy
-    grid_in = t.grid.daily_import
-    self_suff = min(100.0, max(0.0, ((load_kwh - grid_in) / load_kwh) * 100.0)) if load_kwh > 0 else 100.0
-
-    msg = (
-        f"📊 <b>ДЕННІ ПІДСУМКИ:</b>\n\n"
-        f"☀️ Генерація сонця: <b>{solar_kwh:.2f} кВт⋅год</b>\n"
-        f"🏠 Споживання будинку: <b>{load_kwh:.2f} кВт⋅год</b>\n"
-        f"🔋 Заряд батарей: <b>{t.battery.daily_charge:.2f} кВт⋅год</b>\n"
-        f"🌐 Імпорт з мережі: <b>{grid_in:.2f} кВт⋅год</b>\n"
-        f"🌱 Автономність: <b>{self_suff:.1f}%</b>"
-    )
-    await call.message.answer(msg, parse_mode="HTML", reply_markup=get_status_inline_keyboard())
-    await call.answer()
+        await call.answer("Показники вже актуальні")
 
 
 @router.callback_query(F.data == "toggle_alerts")
@@ -278,7 +526,26 @@ async def cb_toggle_alerts(call: CallbackQuery):
     chat_id = call.message.chat.id
     if chat_id in app_state.subscriber_chat_ids:
         app_state.remove_subscriber(chat_id)
-        await call.answer("🔕 Сповіщення вимкнено", show_alert=True)
+        msg_pop = "🔕 Сповіщення про світло вимкнено"
     else:
         app_state.add_subscriber(chat_id)
-        await call.answer("🔔 Сповіщення увімкнено! Ви отримуватимете алерти про світло.", show_alert=True)
+        msg_pop = "🔔 Сповіщення увімкнено! Ви отримуватимете алерти про блекаут."
+
+    is_subbed = chat_id in app_state.subscriber_chat_ids
+    toggle_text = "🔕 Вимкнути сповіщення" if is_subbed else "🔔 Увімкнути сповіщення"
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=toggle_text, callback_data="toggle_alerts")],
+            [InlineKeyboardButton(text="⚡ До головної панелі", callback_data="tab_main")],
+        ]
+    )
+    try:
+        await call.message.edit_text(
+            format_alerts_dashboard(chat_id),
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    except Exception:
+        pass
+    await call.answer(msg_pop, show_alert=True)

@@ -18,7 +18,7 @@ def test_simulator_and_formatter():
     
     # Check Ukrainian Telegram message formatter
     msg = format_status_message(telemetry)
-    assert "СТАНЦІЯ DEYE HYBRID" in msg
+    assert "DEYE HYBRID" in msg
     assert "СОНЯЧНІ ПАНЕЛІ" in msg
     assert "БАТАРЕЇ" in msg
     assert "Акумулятор 1" in msg
