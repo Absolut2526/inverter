@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: deye-solar-monitor
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.8
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ADMIN_CHAT_IDS
+        sync: false
+      - key: WEB_BASE_URL
+        sync: false
+      - key: SOLARMAN_ENABLED
+        value: "true"
+      - key: SOLARMAN_APP_ID
+        sync: false
+      - key: SOLARMAN_APP_SECRET
+        sync: false
+      - key: SOLARMAN_EMAIL
+        sync: false
+      - key: SOLARMAN_PASSWORD
+        sync: false
+      - key: SOLARMAN_INVERTER_SN
+        sync: false
+      - key: SECRET_PUSH_TOKEN
+        generateValue: true

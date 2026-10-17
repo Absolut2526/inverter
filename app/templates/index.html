@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="uk" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deye Solar Monitor | Онлайн-моніторинг</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            solar: '#f59e0b',
+            battery: '#10b981',
+            grid: '#3b82f6',
+            load: '#ec4899',
+            darkbg: '#0f172a',
+            darkcard: '#1e293b',
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body class="bg-[#0b0f19] text-slate-100 min-h-screen flex flex-col font-sans antialiased selection:bg-amber-500 selection:text-black">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center shadow-lg shadow-amber-500/20">
+          <i data-lucide="sun" class="w-6 h-6 text-slate-950 stroke-[2.5]"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-lg leading-tight flex items-center gap-2">
+            <span>Deye Solar Monitor</span>
+            <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">Hybrid 1P</span>
+          </h1>
+          <p class="text-xs text-slate-400 flex items-center gap-1.5">
+            <span id="ws-indicator" class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span id="ws-status">В реальному часі (Online)</span>
+          </p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <!-- Blackout test toggle button for demo -->
+        <button id="btn-toggle-grid" onclick="toggleTestGrid()" class="text-xs px-3 py-1.5 rounded-lg border border-slate-700 hover:border-slate-500 bg-slate-800/80 text-slate-300 hover:text-white transition flex items-center gap-1.5">
+          <i data-lucide="zap-off" class="w-3.5 h-3.5 text-amber-400"></i>
+          <span>Тест аварії 220В</span>
+        </button>
+
+        <!-- Telegram bot link -->
+        <a id="btn-tg-link" href="#" target="_blank" class="text-xs font-medium px-3.5 py-1.5 rounded-lg bg-[#24A1DE] hover:bg-[#208dc3] text-white transition flex items-center gap-1.5 shadow-sm">
+          <i data-lucide="send" class="w-3.5 h-3.5"></i>
+          <span>Telegram-бот</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Grid Alert Banner (hidden by default) -->
+    <div id="blackout-banner" class="hidden p-4 rounded-2xl bg-red-950/60 border border-red-500/50 text-red-200 flex items-center justify-between gap-4 animate-pulse">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-red-500/20 flex items-center justify-center text-red-400">
+          <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <h4 class="font-bold text-sm text-red-300">УВАГА: МІСЬКА МЕРЕЖА 220В ВІДКЛЮЧЕНА!</h4>
+          <p class="text-xs text-red-300/80">Інвертор перейшов в аварійний режим UPS/EPS. Будинок живиться від акумуляторів і сонця.</p>
+        </div>
+      </div>
+      <span class="text-xs px-3 py-1 bg-red-500 text-white rounded-lg font-bold uppercase tracking-wider">Off-Grid</span>
+    </div>
+
+    <!-- Power Flow Diagram (Tesla / Victron Style) -->
+    <div class="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 relative overflow-hidden backdrop-blur-sm">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+          <i data-lucide="activity" class="w-4 h-4 text-amber-400"></i>
+          Поточний перетік енергії (Live Energy Flow)
+        </h3>
+        <span id="last-updated-time" class="text-xs text-slate-500 font-mono">--:--:--</span>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-center my-4">
+        
+        <!-- Left: Solar Panels & Batteries -->
+        <div class="space-y-4">
+          <!-- Solar Card -->
+          <div class="bg-gradient-to-br from-amber-500/10 via-slate-800/40 to-slate-900/60 border border-amber-500/30 rounded-2xl p-4 relative overflow-hidden">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                  <i data-lucide="sun" class="w-5 h-5"></i>
+                </div>
+                <div>
+                  <div class="text-xs text-slate-400 font-medium">Сонячні панелі</div>
+                  <div class="text-xl font-black text-amber-400" id="pv-total-power">0 Вт</div>
+                </div>
+              </div>
+              <div class="text-right">
+                <div class="text-[10px] text-slate-400">Сьогодні</div>
+                <div class="text-xs font-bold text-slate-200" id="pv-daily-energy">0.0 кВт⋅г</div>
+              </div>
+            </div>
+
+            <!-- 2 Strings Info -->
+            <div class="mt-3 pt-3 border-t border-slate-800/80 grid grid-cols-2 gap-2 text-[11px]">
+              <div>
+                <span class="text-slate-400">PV1:</span>
+                <span class="font-bold text-slate-200" id="pv1-power">0 Вт</span>
+                <div class="text-[10px] text-slate-500" id="pv1-v-a">0V / 0A</div>
+              </div>
+              <div class="text-right">
+                <span class="text-slate-400">PV2:</span>
+                <span class="font-bold text-slate-200" id="pv2-power">0 Вт</span>
+                <div class="text-[10px] text-slate-500" id="pv2-v-a">0V / 0A</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Batteries Card (2 Packs) -->
+          <div class="bg-gradient-to-br from-emerald-500/10 via-slate-800/40 to-slate-900/60 border border-emerald-500/30 rounded-2xl p-4">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                  <i data-lucide="battery-charging" class="w-5 h-5" id="batt-icon"></i>
+                </div>
+                <div>
+                  <div class="text-xs text-slate-400 font-medium">Батареї (2 шт)</div>
+                  <div class="text-xl font-black text-emerald-400 flex items-center gap-2">
+                    <span id="batt-total-soc">0%</span>
+                    <span id="batt-power-badge" class="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">0 Вт</span>
+                  </div>
+                </div>
+              </div>
+              <div class="text-right text-[11px] text-slate-400" id="batt-time-remain">
+                --
+              </div>
+            </div>
+
+            <!-- Master SOC Bar -->
+            <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden my-2">
+              <div id="batt-progress-bar" class="bg-gradient-to-r from-emerald-500 to-teal-400 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+
+            <!-- 2 Battery Units -->
+            <div class="mt-3 pt-3 border-t border-slate-800/80 grid grid-cols-2 gap-2 text-[11px]">
+              <div class="bg-slate-900/50 p-2 rounded-xl border border-slate-800">
+                <div class="font-semibold text-slate-300 flex items-center justify-between">
+                  <span>🔋 Акум 1</span>
+                  <span class="text-emerald-400 font-bold" id="b1-soc">0%</span>
+                </div>
+                <div class="text-[10px] text-slate-400 mt-1" id="b1-details">0.0V • 24°C</div>
+              </div>
+              <div class="bg-slate-900/50 p-2 rounded-xl border border-slate-800">
+                <div class="font-semibold text-slate-300 flex items-center justify-between">
+                  <span>🔋 Акум 2</span>
+                  <span class="text-emerald-400 font-bold" id="b2-soc">0%</span>
+                </div>
+                <div class="text-[10px] text-slate-400 mt-1" id="b2-details">0.0V • 24°C</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Center: Inverter Unit with animated energy pulses -->
+        <div class="flex flex-col items-center justify-center p-6 bg-slate-900/80 border border-slate-700/60 rounded-3xl text-center relative shadow-2xl">
+          <div class="w-20 h-20 rounded-2xl bg-gradient-to-tr from-cyan-600 to-blue-500 flex items-center justify-center shadow-lg shadow-cyan-500/20 mb-3 relative">
+            <i data-lucide="cpu" class="w-10 h-10 text-white"></i>
+            <span class="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-emerald-400 border-2 border-slate-900"></span>
+          </div>
+          <h4 class="font-black text-slate-100 text-lg">Deye SUN-5K</h4>
+          <span class="text-xs text-slate-400 font-medium" id="inverter-mode">Режим: Self-Use</span>
+
+          <div class="mt-4 flex items-center gap-4 text-xs text-slate-400">
+            <div>
+              <span class="block text-[10px] uppercase">Температура</span>
+              <span class="font-bold text-slate-200" id="inverter-temp">0°C</span>
+            </div>
+            <div class="h-6 w-px bg-slate-800"></div>
+            <div>
+              <span class="block text-[10px] uppercase">Статус</span>
+              <span class="font-bold text-emerald-400" id="inverter-status">Норма</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: House Load & Grid -->
+        <div class="space-y-4">
+          <!-- House Load Card -->
+          <div class="bg-gradient-to-br from-purple-500/10 via-slate-800/40 to-slate-900/60 border border-purple-500/30 rounded-2xl p-4">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                  <i data-lucide="home" class="w-5 h-5"></i>
+                </div>
+                <div>
+                  <div class="text-xs text-slate-400 font-medium">Споживання будинку</div>
+                  <div class="text-xl font-black text-purple-400" id="load-power">0 Вт</div>
+                </div>
+              </div>
+              <div class="text-right">
+                <div class="text-[10px] text-slate-400">Сьогодні</div>
+                <div class="text-xs font-bold text-slate-200" id="load-daily-energy">0.0 кВт⋅г</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Grid Card -->
+          <div class="bg-gradient-to-br from-blue-500/10 via-slate-800/40 to-slate-900/60 border border-blue-500/30 rounded-2xl p-4" id="grid-card">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center" id="grid-icon-box">
+                  <i data-lucide="utility-pole" class="w-5 h-5"></i>
+                </div>
+                <div>
+                  <div class="text-xs text-slate-400 font-medium">Міська мережа 220В</div>
+                  <div class="text-xl font-black text-blue-400" id="grid-power">0 Вт</div>
+                </div>
+              </div>
+              <div class="text-right">
+                <span id="grid-status-badge" class="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  Є світло
+                </span>
+              </div>
+            </div>
+
+            <div class="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+              <span id="grid-v-hz">230.0 В • 50.0 Гц</span>
+              <span id="grid-daily-balance">Імпорт: 0.0 кВт⋅г</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Power Dynamic Chart (Chart.js) -->
+    <div class="bg-slate-900/40 border border-slate-800 rounded-3xl p-6 backdrop-blur-sm">
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-4">
+        <div>
+          <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+            <i data-lucide="line-chart" class="w-4 h-4 text-cyan-400"></i>
+            Графік потужності в реальному часі
+          </h3>
+          <p class="text-xs text-slate-500">Динаміка сонця, навантаження, акумуляторів та мережі</p>
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span class="flex items-center gap-1 text-amber-400 font-medium"><span class="w-2 h-2 rounded-full bg-amber-400"></span> Сонце</span>
+          <span class="flex items-center gap-1 text-purple-400 font-medium"><span class="w-2 h-2 rounded-full bg-purple-400"></span> Будинок</span>
+          <span class="flex items-center gap-1 text-emerald-400 font-medium"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Батарея</span>
+          <span class="flex items-center gap-1 text-blue-400 font-medium"><span class="w-2 h-2 rounded-full bg-blue-400"></span> Мережа</span>
+        </div>
+      </div>
+      <div class="h-64 sm:h-72 w-full">
+        <canvas id="powerChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Telegram Bot Promotion Card -->
+    <div class="bg-gradient-to-r from-[#17212b] to-[#0e1621] border border-cyan-500/20 rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl">
+      <div class="flex items-center gap-4">
+        <div class="w-14 h-14 rounded-2xl bg-[#24A1DE] flex items-center justify-center text-white shadow-lg shadow-sky-500/25">
+          <i data-lucide="bot" class="w-8 h-8"></i>
+        </div>
+        <div>
+          <h3 class="text-lg font-bold text-white">Сповіщення в Telegram</h3>
+          <p class="text-xs text-slate-300 max-w-xl mt-1">
+            Бот надішле миттєве сповіщення вам у Telegram, коли зникне або повернеться світло 220В, або коли батареї розрядяться нижче 20%. Ви також можете написати боту <code>/status</code> у будь-який момент.
+          </p>
+        </div>
+      </div>
+      <a id="btn-tg-cta" href="#" target="_blank" class="whitespace-nowrap px-6 py-3 rounded-xl bg-[#24A1DE] hover:bg-[#208dc3] text-white font-bold text-sm transition shadow-lg flex items-center gap-2">
+        <i data-lucide="send" class="w-4 h-4"></i>
+        <span>Підключити бота</span>
+      </a>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-800/60 bg-slate-900/30 py-6 text-center text-xs text-slate-500">
+    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+      <div>Deye Hybrid Inverter + Dual Battery Realtime Monitor</div>
+      <div>Працює на FastAPI + WebSockets + aiogram 3</div>
+    </div>
+  </footer>
+
+  <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
