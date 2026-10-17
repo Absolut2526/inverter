@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # Web Dashboard & Public URL
     HOST: str = Field(default="0.0.0.0")
     PORT: int = Field(default=8000)
-    WEB_BASE_URL: str = Field(default="http://localhost:8000", description="Public URL of the dashboard")
+    WEB_BASE_URL: str = Field(default="https://solarsystem67.onrender.com", description="Public URL of the dashboard")
     SECRET_PUSH_TOKEN: str = Field(default="deye-secure-token-12345", description="Token for POST /api/telemetry")
 
     # Deye Cloud OpenAPI (https://developer.deyecloud.com)

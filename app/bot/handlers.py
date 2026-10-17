@@ -211,16 +211,33 @@ def format_alerts_dashboard(chat_id: int) -> str:
 # KEYBOARDS
 # =========================================================================
 
+def get_safe_web_url() -> str:
+    url = settings.WEB_BASE_URL.strip()
+    if not url or "localhost" in url or not url.startswith("https://"):
+        return "https://solarsystem67.onrender.com"
+    return url
+
+
 def get_panel_inline_keyboard(active_tab: str = "main") -> InlineKeyboardMarkup:
-    web_url = settings.WEB_BASE_URL.strip()
-    if not web_url.startswith("http"):
-        web_url = "https://solarsystem67.onrender.com"
+    web_url = get_safe_web_url()
 
     # Tab labels with active indicator
     tab_main = "⚡ Головна" if active_tab != "main" else "• ⚡ Головна •"
     tab_battery = "🔋 Батареї" if active_tab != "battery" else "• 🔋 Батареї •"
     tab_solar = "☀️ Сонце" if active_tab != "solar" else "• ☀️ Сонце •"
     tab_stats = "📊 Баланс" if active_tab != "stats" else "• 📊 Баланс •"
+
+    # Telegram requires HTTPS for WebAppInfo
+    if web_url.startswith("https://"):
+        web_button = InlineKeyboardButton(
+            text="📱 Відкрити WebApp дашборд",
+            web_app=WebAppInfo(url=web_url),
+        )
+    else:
+        web_button = InlineKeyboardButton(
+            text="🌐 Відкрити дашборд",
+            url=web_url,
+        )
 
     rows = [
         # Action Row
@@ -237,13 +254,8 @@ def get_panel_inline_keyboard(active_tab: str = "main") -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=tab_solar, callback_data="tab_solar"),
             InlineKeyboardButton(text=tab_stats, callback_data="tab_stats"),
         ],
-        # WebApp Fullscreen Button
-        [
-            InlineKeyboardButton(
-                text="📱 Відкрити WebApp дашборд",
-                web_app=WebAppInfo(url=web_url),
-            ),
-        ],
+        # WebApp / Link Button
+        [web_button],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -370,26 +382,24 @@ async def cmd_notify(message: Message):
 
 @router.message(F.text == "📱 Відкрити сайт")
 async def cmd_website(message: Message):
-    web_url = settings.WEB_BASE_URL.strip()
-    if not web_url.startswith("http"):
-        web_url = "https://solarsystem67.onrender.com"
+    web_url = get_safe_web_url()
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🚀 Відкрити WebApp прямо тут",
-                    web_app=WebAppInfo(url=web_url),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🌐 Відкрити у браузері",
-                    url=web_url,
-                )
-            ],
-        ]
-    )
+    rows = []
+    if web_url.startswith("https://"):
+        rows.append([
+            InlineKeyboardButton(
+                text="🚀 Відкрити WebApp прямо тут",
+                web_app=WebAppInfo(url=web_url),
+            )
+        ])
+    rows.append([
+        InlineKeyboardButton(
+            text="🌐 Відкрити у браузері",
+            url=web_url,
+        )
+    ])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await message.answer(
         f"🌐 <b>Онлайн-дашборд сонячної станції:</b>\n<code>{web_url}</code>",
         parse_mode="HTML",
