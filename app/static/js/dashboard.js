@@ -163,6 +163,17 @@ function connectWebSocket() {
   };
 }
 
+// Helper to format power in W or кВт (if >= 1000 W)
+function formatPower(watts, showSign = false) {
+  if (watts === null || watts === undefined || isNaN(watts)) return "0 Вт";
+  const absW = Math.abs(Number(watts));
+  const sign = showSign && watts > 0 ? "+" : (watts < 0 ? "-" : "");
+  if (absW >= 1000) {
+    return `${sign}${(absW / 1000).toFixed(2)} кВт`;
+  }
+  return `${sign}${Math.round(absW)} Вт`;
+}
+
 // Update DOM elements with new telemetry data
 function updateUI(t) {
   if (!t) return;
@@ -172,11 +183,11 @@ function updateUI(t) {
   document.getElementById('last-updated-time').innerText = timeStr;
 
   // Solar
-  document.getElementById('pv-total-power').innerText = `${Math.round(t.solar.total_power)} Вт`;
+  document.getElementById('pv-total-power').innerText = formatPower(t.solar.total_power);
   document.getElementById('pv-daily-energy').innerText = `${t.solar.daily_energy.toFixed(1)} кВт⋅г`;
-  document.getElementById('pv1-power').innerText = `${Math.round(t.solar.pv1_power)} Вт`;
+  document.getElementById('pv1-power').innerText = formatPower(t.solar.pv1_power);
   document.getElementById('pv1-v-a').innerText = `${t.solar.pv1_voltage}V • ${t.solar.pv1_current}A`;
-  document.getElementById('pv2-power').innerText = `${Math.round(t.solar.pv2_power)} Вт`;
+  document.getElementById('pv2-power').innerText = formatPower(t.solar.pv2_power);
   document.getElementById('pv2-v-a').innerText = `${t.solar.pv2_voltage}V • ${t.solar.pv2_current}A`;
 
   // Battery
@@ -193,13 +204,13 @@ function updateUI(t) {
     battBar.className = "bg-gradient-to-r from-emerald-500 to-teal-400 h-2.5 rounded-full";
   }
 
-  const battPower = Math.round(t.battery.total_power);
+  const battPower = Number(t.battery.total_power);
   const battBadge = document.getElementById('batt-power-badge');
   if (battPower > 20) {
-    battBadge.innerText = `+${battPower} Вт (Заряд)`;
+    battBadge.innerText = `${formatPower(battPower, true)} (Заряд)`;
     battBadge.className = "text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300";
   } else if (battPower < -20) {
-    battBadge.innerText = `${battPower} Вт (Розряд)`;
+    battBadge.innerText = `${formatPower(battPower)} (Розряд)`;
     battBadge.className = "text-xs font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300";
   } else {
     battBadge.innerText = "0 Вт (Сплячий)";
@@ -231,7 +242,7 @@ function updateUI(t) {
   document.getElementById('inverter-status').innerText = t.inverter.fault_code === 0 ? "Норма" : `Код ${t.inverter.fault_code}`;
 
   // Load
-  document.getElementById('load-power').innerText = `${Math.round(t.load.power)} Вт`;
+  document.getElementById('load-power').innerText = formatPower(t.load.power);
   document.getElementById('load-daily-energy').innerText = `${t.load.daily_energy.toFixed(1)} кВт⋅г`;
 
   // Grid
@@ -247,12 +258,12 @@ function updateUI(t) {
     gridBadge.innerText = "Є світло";
     gridBadge.className = "text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
     
-    const gp = Math.round(t.grid.power);
+    const gp = Number(t.grid.power);
     if (gp > 30) {
-      gridPowerEl.innerText = `+${gp} Вт (Імпорт)`;
+      gridPowerEl.innerText = `${formatPower(gp, true)} (Імпорт)`;
       gridPowerEl.className = "text-xl font-black text-blue-400";
     } else if (gp < -30) {
-      gridPowerEl.innerText = `${gp} Вт (Експорт)`;
+      gridPowerEl.innerText = `${formatPower(gp)} (Експорт)`;
       gridPowerEl.className = "text-xl font-black text-emerald-400";
     } else {
       gridPowerEl.innerText = "0 Вт (Баланс)";

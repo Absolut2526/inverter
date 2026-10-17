@@ -26,6 +26,16 @@ def make_progress_bar(percent: float, length: int = 10) -> str:
     return "█" * filled + "░" * empty
 
 
+def format_power(watts: float | int, show_sign: bool = False) -> str:
+    """Formats watts to W or кВт (if >= 1000 W)."""
+    abs_w = abs(float(watts))
+    sign = "+" if show_sign and watts > 0 else ("-" if watts < 0 else "")
+    if abs_w >= 1000.0:
+        val_kw = abs_w / 1000.0
+        return f"{sign}{val_kw:.2f} кВт"
+    return f"{sign}{int(round(abs_w))} Вт"
+
+
 def get_source_label(source: str) -> str:
     if source == "deye_cloud":
         return "🌐 Deye Cloud"
@@ -47,9 +57,9 @@ def format_main_dashboard(t: SystemTelemetry) -> str:
     if t.grid.is_online:
         grid_status_line = f"🟢 <b>Мережа 220В: Є СВІТЛО</b> ({t.grid.voltage:.1f} В, {t.grid.frequency:.1f} Гц)"
         if t.grid.power > 30:
-            grid_flow = f"   📥 Імпорт з мережі: <b>{int(t.grid.power)} Вт</b>"
+            grid_flow = f"   📥 Імпорт з мережі: <b>{format_power(t.grid.power)}</b>"
         elif t.grid.power < -30:
-            grid_flow = f"   📤 Експорт в мережу: <b>{int(abs(t.grid.power))} Вт</b>"
+            grid_flow = f"   📤 Експорт в мережу: <b>{format_power(abs(t.grid.power))}</b>"
         else:
             grid_flow = "   ⚖️ Мережа в нульовому балансі"
     else:
@@ -57,11 +67,11 @@ def format_main_dashboard(t: SystemTelemetry) -> str:
         grid_flow = "   ⚠️ Живлення виключно від акумуляторів і сонця"
 
     # Battery mode
-    batt_w = int(t.battery.total_power)
+    batt_w = t.battery.total_power
     if batt_w > 20:
-        batt_mode = f"⚡ <b>Заряджається</b> (+{batt_w} Вт)"
+        batt_mode = f"⚡ <b>Заряджається</b> ({format_power(batt_w, show_sign=True)})"
     elif batt_w < -20:
-        batt_mode = f"🔻 <b>Розряджається</b> ({abs(batt_w)} Вт)"
+        batt_mode = f"🔻 <b>Розряджається</b> ({format_power(batt_w)})"
     else:
         batt_mode = "💤 <b>Очікування (Standby)</b>"
 
@@ -79,13 +89,13 @@ def format_main_dashboard(t: SystemTelemetry) -> str:
     return (
         f"⚡ <b>ГОЛОВНА ПАНЕЛЬ DEYE HYBRID</b> | 🕒 {now_str}\n"
         f"<i>Джерело: {get_source_label(t.source)}</i>\n\n"
-        f"☀️ <b>СОНЯЧНІ ПАНЕЛІ: {int(t.solar.total_power)} Вт</b>\n"
-        f"   • PV1: {int(t.solar.pv1_power)} Вт | PV2: {int(t.solar.pv2_power)} Вт\n"
+        f"☀️ <b>СОНЯЧНІ ПАНЕЛІ: {format_power(t.solar.total_power)}</b>\n"
+        f"   • PV1: {format_power(t.solar.pv1_power)} | PV2: {format_power(t.solar.pv2_power)}\n"
         f"   • Генерація сьогодні: <b>{t.solar.daily_energy:.2f} кВт⋅год</b>\n\n"
         f"🔋 <b>БАТАРЕЇ (2 БЛОКИ): {t.battery.total_soc:.1f}%</b> [{make_progress_bar(t.battery.total_soc)}]\n"
         f"   • Режим: {batt_mode}\n"
         f"   • Шина DC: {t.battery.voltage:.1f} В (струм: {t.battery.current:.1f} А){time_remain}{batt_blocks}\n\n"
-        f"🏠 <b>СПОЖИВАННЯ БУДИНКУ: {int(t.load.power)} Вт</b>\n"
+        f"🏠 <b>СПОЖИВАННЯ БУДИНКУ: {format_power(t.load.power)}</b>\n"
         f"   • Витрачено сьогодні: <b>{t.load.daily_energy:.2f} кВт⋅год</b>\n\n"
         f"{grid_status_line}\n"
         f"{grid_flow}\n\n"
@@ -99,12 +109,12 @@ format_status_message = format_main_dashboard
 
 def format_battery_dashboard(t: SystemTelemetry) -> str:
     now_str = datetime.now().strftime("%H:%M:%S")
-    batt_w = int(t.battery.total_power)
+    batt_w = t.battery.total_power
 
     if batt_w > 20:
-        action_text = f"⚡ <b>Заряджання:</b> +{batt_w} Вт"
+        action_text = f"⚡ <b>Заряджання:</b> {format_power(batt_w, show_sign=True)}"
     elif batt_w < -20:
-        action_text = f"🔻 <b>Розряджання:</b> -{abs(batt_w)} Вт"
+        action_text = f"🔻 <b>Розряджання:</b> {format_power(batt_w)}"
     else:
         action_text = "💤 <b>Режим очікування (Standby)</b>"
 
@@ -121,7 +131,7 @@ def format_battery_dashboard(t: SystemTelemetry) -> str:
             f"🔋 <b>{b.name} (Блок #{idx})</b>\n"
             f"• Рівень заряду: [{bar}] <b>{b.soc:.1f}%</b>\n"
             f"• Напруга: <b>{b.voltage:.2f} В</b> | Струм: <b>{b.current:.1f} А</b>\n"
-            f"• Потужність: <b>{int(b.power)} Вт</b>\n"
+            f"• Потужність: <b>{format_power(b.power)}</b>\n"
             f"• Температура банок: <b>{b.temperature:.1f}°C</b>\n"
             f"• Здоров'я батареї (SOH): <b>{b.soh:.0f}%</b> (Ідеальний)\n"
         )
@@ -143,17 +153,16 @@ def format_battery_dashboard(t: SystemTelemetry) -> str:
 
 def format_solar_dashboard(t: SystemTelemetry) -> str:
     now_str = datetime.now().strftime("%H:%M:%S")
-    pv_total = int(t.solar.total_power)
 
     return (
         f"☀️ <b>СОНЯЧНА ГЕНЕРАЦІЯ DEYE</b> | 🕒 {now_str}\n\n"
-        f"⚡ <b>Поточна сумарна потужність:</b> <b>{pv_total} Вт</b>\n\n"
+        f"⚡ <b>Поточна сумарна потужність:</b> <b>{format_power(t.solar.total_power)}</b>\n\n"
         f"📐 <b>Стрінг 1 (PV1 - Схід / Південь):</b>\n"
-        f"• Потужність: <b>{int(t.solar.pv1_power)} Вт</b>\n"
+        f"• Потужність: <b>{format_power(t.solar.pv1_power)}</b>\n"
         f"• Напруга: <b>{t.solar.pv1_voltage:.1f} В</b>\n"
         f"• Струм: <b>{t.solar.pv1_current:.2f} А</b>\n\n"
         f"📐 <b>Стрінг 2 (PV2 - Захід):</b>\n"
-        f"• Потужність: <b>{int(t.solar.pv2_power)} Вт</b>\n"
+        f"• Потужність: <b>{format_power(t.solar.pv2_power)}</b>\n"
         f"• Напруга: <b>{t.solar.pv2_voltage:.1f} В</b>\n"
         f"• Струм: <b>{t.solar.pv2_current:.2f} А</b>\n\n"
         f"📊 <b>Виробіток енергії:</b>\n"

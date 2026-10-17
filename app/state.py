@@ -93,13 +93,14 @@ class AppState:
         # 1. Grid Disconnected / Blackout
         if self.last_grid_online is True and grid_online is False:
             title = "⚠️ ЗНИКЛО СВІТЛО В МЕРЕЖІ!"
-            load_w = int(telemetry.load.power)
+            load_val = telemetry.load.power
+            load_str = f"{(load_val / 1000.0):.2f} кВт" if load_val >= 1000.0 else f"{int(round(load_val))} Вт"
             hours_str = f"{telemetry.battery.estimated_remaining_hours} год" if telemetry.battery.estimated_remaining_hours else "кілька годин"
             text = (
                 f"🚨 <b>УВАГА: Мережа 220В вимкнена (Блекаут)!</b>\n\n"
                 f"⚡ Інвертор перейшов на автономне живлення від акумуляторів.\n"
                 f"🔋 Поточний заряд: <b>{soc:.1f}%</b>\n"
-                f"🏠 Навантаження будинку: <b>{load_w} Вт</b>\n"
+                f"🏠 Навантаження будинку: <b>{load_str}</b>\n"
                 f"⏳ Орієнтовний час роботи: ~<b>{hours_str}</b>"
             )
             asyncio.create_task(self.alert_callback(self.subscriber_chat_ids, title, text))
