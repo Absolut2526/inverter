@@ -162,6 +162,7 @@ async def serve_dashboard(request: Request):
         context={
             "web_url": settings.WEB_BASE_URL,
             "has_bot": bool(settings.TELEGRAM_BOT_TOKEN),
+            "bot_username": "solarsystem67bot",
         },
     )
 

@@ -26,6 +26,8 @@ class DeyeCloudClient:
         self.password = settings.DEYE_PASSWORD or settings.SOLARMAN_PASSWORD
         self.device_sn = settings.DEYE_DEVICE_SN or settings.SOLARMAN_INVERTER_SN
         self._deye = None
+        self._auto_device_sn: Optional[str] = None
+        self._auto_station_id: Optional[int] = None
 
     def _get_client(self):
         if self._deye is None:
@@ -37,9 +39,9 @@ class DeyeCloudClient:
                     email=self.email,
                     password=self.password,
                 )
-                logger.info("Initialized DeyeCloud SDK client")
+                logger.info(f"Initialized DeyeCloud SDK for user {self.email}")
             except Exception as e:
-                logger.error(f"Failed to initialize DeyeCloud SDK: {e}")
+                logger.error(f"Failed to initialize DeyeCloud SDK: {e}", exc_info=True)
                 return None
         return self._deye
 
@@ -54,22 +56,53 @@ class DeyeCloudClient:
 
         try:
             device = None
-            if self.device_sn:
-                device = client.device(self.device_sn)
-                device._fetch()
-            else:
-                # Discover devices from stations
-                for st in client.station.list():
-                    stations_data = client.station.latest([st.station_id])
-                    break
+            station_latest = None
 
-            if not device:
-                logger.warning("No Deye device found")
+            # 1. Discover stations and devices if SN not explicitly configured or to get station totals
+            try:
+                stations = list(client.station.list())
+                if stations:
+                    first_st = stations[0]
+                    self._auto_station_id = first_st.station_id
+                    station_latest = first_st.latest()
+                    logger.info(f"Found Deye Station: {first_st.station_name} (ID: {first_st.station_id})")
+
+                    # If device_sn not set, discover from station devices
+                    if not self.device_sn and not self._auto_device_sn:
+                        devices = list(first_st.devices())
+                        if devices:
+                            dev_info = devices[0]
+                            # Usually dev_info is a dict or Device object
+                            self._auto_device_sn = getattr(dev_info, "device_sn", None) or getattr(dev_info, "deviceSn", None)
+                            if isinstance(dev_info, dict):
+                                self._auto_device_sn = dev_info.get("device_sn") or dev_info.get("deviceSn")
+                            logger.info(f"Auto-discovered Inverter SN: {self._auto_device_sn}")
+            except Exception as e:
+                logger.warning(f"Station discovery error (non-fatal): {e}")
+
+            target_sn = self.device_sn or self._auto_device_sn
+
+            # 2. Fetch device telemetry
+            if target_sn:
+                try:
+                    device = client.device(target_sn)
+                    device._fetch()
+                except Exception as e:
+                    logger.warning(f"Could not fetch device {target_sn}: {e}")
+
+            # Merge data from device and/or station
+            d: Dict[str, Any] = {}
+            if device and hasattr(device, "__dict__"):
+                d.update(device.__dict__)
+            if station_latest and hasattr(station_latest, "__dict__"):
+                for k, v in station_latest.__dict__.items():
+                    if k not in d or d[k] is None:
+                        d[k] = v
+
+            if not d:
+                logger.warning("No data retrieved from Deye Cloud")
                 return None
 
-            # Extract fields from Deye device dictionary
-            d = device.__dict__
-            
             def get_f(keys: List[str], default: float = 0.0) -> float:
                 for k in keys:
                     v = d.get(k)
@@ -89,7 +122,10 @@ class DeyeCloudClient:
             pv2_volt = get_f(["pv2_volt", "pv2_v", "pv2_voltage"], 0.0)
             pv2_curr = get_f(["pv2_curr", "pv2_i", "pv2_current"], 0.0)
 
-            total_pv = get_f(["total_pv", "generation_power", "pv_power", "active_power"], pv1_power + pv2_power)
+            total_pv = get_f(
+                ["total_pv", "generation_power", "pv_power", "active_power", "total_power"],
+                pv1_power + pv2_power,
+            )
             daily_pv = get_f(["daily_generation", "daily_production", "e_today", "day_generation"], 0.0)
             total_pv_energy = get_f(["total_generation", "e_total", "total_energy"], 0.0)
 
@@ -141,15 +177,15 @@ class DeyeCloudClient:
             grid_volt = get_f(["grid_volt", "ac_volt", "grid_voltage", "vac1"], 230.0)
             grid_freq = get_f(["grid_freq", "fac", "grid_frequency"], 50.0)
             grid_power = get_f(["grid_power", "feed_in_power", "active_power_grid", "p_grid"], 0.0)
-            daily_grid_import = get_f(["daily_grid_buy", "e_grid_buy_today"], 0.0)
-            daily_grid_export = get_f(["daily_grid_sell", "e_grid_sell_today"], 0.0)
+            daily_grid_import = get_f(["daily_grid_buy", "e_grid_buy_today", "day_grid_buy"], 0.0)
+            daily_grid_export = get_f(["daily_grid_sell", "e_grid_sell_today", "day_grid_sell"], 0.0)
             is_grid_online = grid_volt > 150.0
 
             # Load
-            load_power = get_f(["total_load_power", "load_power", "p_load", "house_load"], 0.0)
+            load_power = get_f(["total_load_power", "load_power", "p_load", "house_load", "consumption_power"], 0.0)
             if load_power == 0.0:
                 load_power = max(0.0, total_pv - batt_power + grid_power)
-            daily_load = get_f(["daily_consumption", "e_load_today", "daily_load"], 0.0)
+            daily_load = get_f(["daily_consumption", "e_load_today", "daily_load", "day_consumption"], 0.0)
 
             # Inverter
             inv_temp = get_f(["inverter_temp", "inv_temp", "radiator_temp", "t_inv"], 35.0)
@@ -192,7 +228,7 @@ class DeyeCloudClient:
                 ),
                 inverter=InverterStatus(
                     model=device_model,
-                    serial_number=self.device_sn or "DEYE-CLOUD-CONNECTED",
+                    serial_number=target_sn or "DEYE-CLOUD-CONNECTED",
                     work_mode="Self-Use" if is_grid_online else "Backup EPS",
                     temperature=inv_temp,
                 ),
