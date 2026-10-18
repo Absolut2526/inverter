@@ -104,12 +104,17 @@ class ChargeController:
                 logger.error(error_msg)
             else:
                 try:
-                    # 1. Send GRID_CHARGE enable command
+                    # 1. Send GRID_CHARGE enable command with exact OpenAPI schema:
+                    # {"deviceSn": ..., "batteryModeType": "GRID_CHARGE", "action": "on"}
+                    body = {
+                        "deviceSn": str(device_sn),
+                        "batteryModeType": "GRID_CHARGE",
+                        "action": "on",
+                    }
                     order = await asyncio.to_thread(
-                        deye.order.battery_mode,
-                        device_sn=str(device_sn),
-                        charge_mode="GRID_CHARGE",
-                        enable=True,
+                        deye.post,
+                        "v1.0/order/battery/modeControl",
+                        json=body,
                     )
                     order_id = getattr(order, "order_id", None)
                     command_sent = True
@@ -118,9 +123,9 @@ class ChargeController:
                     # 2. Set BATTERY_FIRST to prioritize battery for incoming energy
                     try:
                         await asyncio.to_thread(
-                            deye.order.energy_pattern,
-                            device_sn=str(device_sn),
-                            energy_pattern="BATTERY_FIRST",
+                            deye.post,
+                            "v1.0/order/sys/energyPattern/update",
+                            json={"deviceSn": str(device_sn), "energyPattern": "BATTERY_FIRST"},
                         )
                     except Exception as ep_err:
                         logger.warning(f"BATTERY_FIRST secondary command warning: {ep_err}")
@@ -167,11 +172,15 @@ class ChargeController:
         if is_cloud_mode and deye and device_sn:
             try:
                 # 1. Disable GRID_CHARGE
+                body = {
+                    "deviceSn": str(device_sn),
+                    "batteryModeType": "GRID_CHARGE",
+                    "action": "off",
+                }
                 order = await asyncio.to_thread(
-                    deye.order.battery_mode,
-                    device_sn=str(device_sn),
-                    charge_mode="GRID_CHARGE",
-                    enable=False,
+                    deye.post,
+                    "v1.0/order/battery/modeControl",
+                    json=body,
                 )
                 order_id = getattr(order, "order_id", None)
                 command_sent = True
@@ -180,9 +189,9 @@ class ChargeController:
                 # 2. Restore LOAD_FIRST (Self-Use)
                 try:
                     await asyncio.to_thread(
-                        deye.order.energy_pattern,
-                        device_sn=str(device_sn),
-                        energy_pattern="LOAD_FIRST",
+                        deye.post,
+                        "v1.0/order/sys/energyPattern/update",
+                        json={"deviceSn": str(device_sn), "energyPattern": "LOAD_FIRST"},
                     )
                 except Exception as ep_err:
                     logger.warning(f"LOAD_FIRST restore warning: {ep_err}")
