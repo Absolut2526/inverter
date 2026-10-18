@@ -218,11 +218,27 @@ def format_alerts_dashboard(chat_id: int) -> str:
     )
 
 
+DAY_TYPE_LABELS = {
+    "today": "Сьогодні",
+    "tomorrow": "Завтра",
+    "daily": "Щодня",
+    "monday": "Щопонеділка",
+    "tuesday": "Щовівторка",
+    "wednesday": "Щосереди",
+    "thursday": "Щочетверга",
+    "friday": "Щоп'ятниці",
+    "saturday": "Щосуботи",
+    "sunday": "Щонеділі",
+}
+
+user_pending_schedule: dict[int, str] = {}
+
+
 def format_charge_dashboard(t: SystemTelemetry) -> str:
     now_str = datetime.now().strftime("%H:%M:%S")
 
     if charge_controller.is_force_charging:
-        status_text = "⚡ <b>АКТИВНО: Йде примусове заряджання від мережі 220В</b>"
+        status_text = "⚡ <b>АКТИВНО: Йде заряджання від мережі 220В</b>"
         if charge_controller.force_charge_end_time:
             left_min = max(1, int((charge_controller.force_charge_end_time - time.time()) / 60))
             timer_text = f"⏳ Залишилося часу за таймером: <b>~{left_min} хв</b>\n"
@@ -232,15 +248,27 @@ def format_charge_dashboard(t: SystemTelemetry) -> str:
         status_text = "💤 <b>НЕАКТИВНО (Звичайний автономний режим Self-Use)</b>"
         timer_text = ""
 
+    # Active schedules list
+    if charge_controller.schedules:
+        schedules_lines = []
+        for idx, s in enumerate(charge_controller.schedules, 1):
+            bullet = "🟢" if s.is_active else "⚪"
+            run_badge = " [⚡ ЗАРЯДЖАЄТЬСЯ]" if s.is_currently_running else ""
+            schedules_lines.append(f"   {idx}. {bullet} <b>{s.day_label}</b>: <code>{s.start_time} - {s.end_time}</code> (до {s.target_soc:.0f}%){run_badge}")
+        schedules_text = "\n" + "\n".join(schedules_lines)
+    else:
+        schedules_text = "\n   <i>• Активних графіків немає</i>"
+
     night_status = "🟢 <b>УВІМКНЕНО (23:00 - 07:00)</b>" if charge_controller.night_charge_enabled else "⚪ <b>ВИМКНЕНО</b>"
 
     return (
         f"🔌 <b>КЕРУВАННЯ ЗАРЯДЖАННЯМ ВІД МЕРЕЖІ 220В</b> | 🕒 {now_str}\n\n"
         f"🔋 <b>Поточний заряд батарей:</b> [{make_progress_bar(t.battery.total_soc)}] <b>{t.battery.total_soc:.1f}%</b>\n"
-        f"⚡ <b>Стан заряду від мережі:</b> {status_text}\n"
+        f"⚡ <b>Стан заряду:</b> {status_text}\n"
         f"{timer_text}"
-        f"🌙 <b>Нічний тариф (Нічний заряд):</b> {night_status}\n\n"
-        f"💡 <i>Ви можете примусово підзарядити акумулятори перед очікуваним відключенням світла або активувати нічний заряд за 50% тарифом. Оберіть дію нижче:</i>"
+        f"🌙 <b>Нічний тариф:</b> {night_status}\n\n"
+        f"📅 <b>Заплановані графіки зарядки:</b>{schedules_text}\n\n"
+        f"💡 <i>Натисніть «➕ Запланувати зарядку», щоб обрати день і години (наприклад, завтра з 02:00 до 06:00), або ввімкніть швидкий заряд нижче:</i>"
     )
 
 
@@ -259,7 +287,16 @@ def get_charge_inline_keyboard() -> InlineKeyboardMarkup:
     night_label = "🌙 Вимкнути нічний тариф" if charge_controller.night_charge_enabled else "🌙 Увімкнути нічний тариф (23:00 - 07:00)"
     stop_label = "⏹️ Зупинити заряд від 220В" if charge_controller.is_force_charging else "⏹️ Режим Self-Use (Стандарт)"
 
-    rows = [
+    sched_rows = [
+        [
+            InlineKeyboardButton(text="➕ Запланувати зарядку", callback_data="sched_pick_day"),
+        ]
+    ]
+
+    if charge_controller.schedules:
+        sched_rows[0].append(InlineKeyboardButton(text="🗑️ Видалити розклад", callback_data="sched_list_del"))
+
+    rows = sched_rows + [
         [
             InlineKeyboardButton(text="⚡ Зарядити зараз (до 100%)", callback_data="charge_now_100"),
         ],
@@ -278,6 +315,70 @@ def get_charge_inline_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔋 Батареї", callback_data="tab_battery"),
         ],
     ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_day_picker_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text="📅 Сьогодні", callback_data="sched_day:today"),
+            InlineKeyboardButton(text="📅 Завтра", callback_data="sched_day:tomorrow"),
+            InlineKeyboardButton(text="🔄 Щодня", callback_data="sched_day:daily"),
+        ],
+        [
+            InlineKeyboardButton(text="Пн", callback_data="sched_day:monday"),
+            InlineKeyboardButton(text="Вт", callback_data="sched_day:tuesday"),
+            InlineKeyboardButton(text="Ср", callback_data="sched_day:wednesday"),
+            InlineKeyboardButton(text="Чт", callback_data="sched_day:thursday"),
+        ],
+        [
+            InlineKeyboardButton(text="Пт", callback_data="sched_day:friday"),
+            InlineKeyboardButton(text="Сб", callback_data="sched_day:saturday"),
+            InlineKeyboardButton(text="Нд", callback_data="sched_day:sunday"),
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Назад до меню заряду", callback_data="tab_charge"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_time_picker_keyboard(day_type: str) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text="🌙 00:00 - 06:00", callback_data=f"sched_apply:{day_type}:00:00:06:00"),
+            InlineKeyboardButton(text="🌙 02:00 - 05:00", callback_data=f"sched_apply:{day_type}:02:00:05:00"),
+        ],
+        [
+            InlineKeyboardButton(text="☀️ 13:00 - 16:00", callback_data=f"sched_apply:{day_type}:13:00:16:00"),
+            InlineKeyboardButton(text="☀️ 14:00 - 16:00", callback_data=f"sched_apply:{day_type}:14:00:16:00"),
+        ],
+        [
+            InlineKeyboardButton(text="🌆 18:00 - 21:00", callback_data=f"sched_apply:{day_type}:18:00:21:00"),
+            InlineKeyboardButton(text="🌙 23:00 - 07:00", callback_data=f"sched_apply:{day_type}:23:00:07:00"),
+        ],
+        [
+            InlineKeyboardButton(text="✍️ Ввести інший час вручну", callback_data=f"sched_ask_text:{day_type}"),
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Назад до вибору дня", callback_data="sched_pick_day"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_delete_schedules_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for s in charge_controller.schedules:
+        rows.append([
+            InlineKeyboardButton(
+                text=f"❌ {s.day_label} ({s.start_time} - {s.end_time})",
+                callback_data=f"sched_del:{s.id}",
+            )
+        ])
+    rows.append([
+        InlineKeyboardButton(text="🔙 Назад", callback_data="tab_charge"),
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -665,9 +766,26 @@ async def cb_tab_charge(call: CallbackQuery):
     await call.answer()
 
 
+def _format_charge_result_alert(res: Dict[str, Any], title: str) -> str:
+    if res.get("cloud_command_sent"):
+        oid = res.get("order_id")
+        sn = res.get("device_sn") or ""
+        oid_txt = f" (Order #{oid})" if oid else ""
+        return (
+            f"⚡ {title} активовано!\n\n"
+            f"✅ Команду надіслано в Deye Cloud{oid_txt} для інвертора {sn}.\n"
+            f"⏱️ Інвертор увімкне зарядку через 30-90 сек після синхронізації Wi-Fi логера."
+        )
+    elif res.get("is_simulator"):
+        return f"⚡ {title} активовано!\n\n(Демо-режим симулятора: батарея заряджається від віртуальної мережі)."
+    else:
+        err = res.get("error_message") or "Не знайдено серійний номер інвертора."
+        return f"⚠️ Помилка зв'язку з інвертором:\n{err}\n\nПеревірте змінні DEYE_... на Render."
+
+
 @router.callback_query(F.data == "charge_now_100")
 async def cb_charge_now_100(call: CallbackQuery):
-    await charge_controller.start_force_charge(target_soc=100.0)
+    res = await charge_controller.start_force_charge(target_soc=100.0)
     t = app_state.latest_telemetry
     if t:
         try:
@@ -678,12 +796,13 @@ async def cb_charge_now_100(call: CallbackQuery):
             )
         except Exception:
             pass
-    await call.answer("⚡ Заряджання розпочато! Батареї заряджаються від 220В до 100%.", show_alert=True)
+    alert_text = _format_charge_result_alert(res, "Заряджання до 100%")
+    await call.answer(alert_text, show_alert=True)
 
 
 @router.callback_query(F.data == "charge_hours_1")
 async def cb_charge_hours_1(call: CallbackQuery):
-    await charge_controller.start_force_charge(target_soc=100.0, duration_hours=1.0)
+    res = await charge_controller.start_force_charge(target_soc=100.0, duration_hours=1.0)
     t = app_state.latest_telemetry
     if t:
         try:
@@ -694,12 +813,13 @@ async def cb_charge_hours_1(call: CallbackQuery):
             )
         except Exception:
             pass
-    await call.answer("⏱️ Заряджання на 1 годину активовано! Зупиниться автоматично.", show_alert=True)
+    alert_text = _format_charge_result_alert(res, "Заряд на 1 годину")
+    await call.answer(alert_text, show_alert=True)
 
 
 @router.callback_query(F.data == "charge_hours_2")
 async def cb_charge_hours_2(call: CallbackQuery):
-    await charge_controller.start_force_charge(target_soc=100.0, duration_hours=2.0)
+    res = await charge_controller.start_force_charge(target_soc=100.0, duration_hours=2.0)
     t = app_state.latest_telemetry
     if t:
         try:
@@ -710,7 +830,8 @@ async def cb_charge_hours_2(call: CallbackQuery):
             )
         except Exception:
             pass
-    await call.answer("⏱️ Заряджання на 2 години активовано! Зупиниться автоматично.", show_alert=True)
+    alert_text = _format_charge_result_alert(res, "Заряд на 2 години")
+    await call.answer(alert_text, show_alert=True)
 
 
 @router.callback_query(F.data == "toggle_night_charge")
@@ -732,7 +853,7 @@ async def cb_toggle_night_charge(call: CallbackQuery):
 
 @router.callback_query(F.data == "charge_stop")
 async def cb_charge_stop(call: CallbackQuery):
-    await charge_controller.stop_force_charge()
+    res = await charge_controller.stop_force_charge()
     t = app_state.latest_telemetry
     if t:
         try:
@@ -743,4 +864,300 @@ async def cb_charge_stop(call: CallbackQuery):
             )
         except Exception:
             pass
-    await call.answer("⏹️ Заряд від мережі зупинено. Інвертор повернуто в Self-Use.", show_alert=True)
+    if res.get("cloud_command_sent"):
+        await call.answer("⏹️ Команду вимкнення заряду передано в Deye Cloud. Інвертор повернуто в Self-Use.", show_alert=True)
+    else:
+        await call.answer("⏹️ Заряд від мережі зупинено. Інвертор повернуто в Self-Use.", show_alert=True)
+
+
+# =========================================================================
+# SCHEDULE WIZARD CALLBACKS (DAY & TIME PICKER)
+# =========================================================================
+
+@router.callback_query(F.data == "sched_pick_day")
+async def cb_sched_pick_day(call: CallbackQuery):
+    text = (
+        "📅 <b>КРОК 1 З 2: ОБЕРІТЬ ДЕНЬ ДЛЯ ЗАРЯДКИ</b>\n\n"
+        "Оберіть, коли саме інвертор Deye має увімкнути заряджання батарей від мережі 220В:\n\n"
+        "• <b>Сьогодні / Завтра</b> — одноразовий заряд у призначений час\n"
+        "• <b>Щодня</b> — регулярний щоденний графік\n"
+        "• <b>Дні тижня (Пн-Нд)</b> — заряджання у конкретний день тижня"
+    )
+    try:
+        await call.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=get_day_picker_keyboard(),
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("sched_day:"))
+async def cb_sched_day(call: CallbackQuery):
+    day_type = call.data.split(":")[1]
+    day_label = DAY_TYPE_LABELS.get(day_type, day_type)
+
+    text = (
+        f"⏰ <b>КРОК 2 З 2: ОБЕРІТЬ ЧАС ДЛЯ [{day_label.upper()}]</b>\n\n"
+        f"Оберіть популярний проміжок часу нижче або натисніть «Ввести інший час вручну»:\n"
+        f"<i>(У вказані години інвертор автоматично увімкне заряд АКБ від 220В)</i>"
+    )
+    try:
+        await call.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=get_time_picker_keyboard(day_type),
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("sched_apply:"))
+async def cb_sched_apply(call: CallbackQuery):
+    # Format: sched_apply:{day_type}:{start_h}:{start_m}:{end_h}:{end_m}
+    parts = call.data.split(":")
+    if len(parts) >= 6:
+        day_type = parts[1]
+        start_time = f"{parts[2]}:{parts[3]}"
+        end_time = f"{parts[4]}:{parts[5]}"
+    else:
+        await call.answer("Помилка формату даних", show_alert=True)
+        return
+
+    sched = charge_controller.add_schedule(
+        day_type=day_type,
+        start_time=start_time,
+        end_time=end_time,
+        target_soc=100.0,
+    )
+    user_pending_schedule.pop(call.message.chat.id, None)
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="➕ Запланувати ще", callback_data="sched_pick_day"),
+                InlineKeyboardButton(text="🔌 До меню заряду", callback_data="tab_charge"),
+            ],
+            [
+                InlineKeyboardButton(text="⚡ Головна панель", callback_data="tab_main"),
+            ],
+        ]
+    )
+
+    text = (
+        f"✅ <b>РОЗКЛАД ЗАРЯДЖАННЯ УСПІШНО ЗБЕРЕЖЕНО!</b>\n\n"
+        f"📅 День: <b>{sched.day_label}</b>\n"
+        f"⏰ Час зарядки: <b>{sched.start_time} — {sched.end_time}</b>\n"
+        f"🎯 Цільовий рівень батарей: <b>до {sched.target_soc:.0f}%</b>\n\n"
+        f"⚡ <i>Інвертор Deye автоматично увімкне заряджання від 220В у призначений час!</i>"
+    )
+
+    try:
+        await call.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    except Exception:
+        pass
+    await call.answer("✅ Графік збережено!", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("sched_ask_text:"))
+async def cb_sched_ask_text(call: CallbackQuery):
+    day_type = call.data.split(":")[1]
+    day_label = DAY_TYPE_LABELS.get(day_type, day_type)
+    user_pending_schedule[call.message.chat.id] = day_type
+
+    text = (
+        f"✍️ <b>ВВЕДЕННЯ ЧАСУ ДЛЯ [{day_label.upper()}]</b>\n\n"
+        f"Надішліть у відповідь у цей чат час початку та завершення зарядки, наприклад:\n"
+        f"• <code>14:30 17:00</code>\n"
+        f"• <code>02:00 - 05:30</code>\n"
+        f"• <code>15 18</code>\n\n"
+        f"<i>Інвертор збереже розклад і розпочне зарядку автоматично!</i>"
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад до варіантів часу", callback_data=f"sched_day:{day_type}")],
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="tab_charge")],
+        ]
+    )
+    try:
+        await call.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "sched_list_del")
+async def cb_sched_list_del(call: CallbackQuery):
+    if not charge_controller.schedules:
+        await call.answer("Немає збережених розкладів для видалення", show_alert=True)
+        return
+
+    text = (
+        "🗑️ <b>СКАСУВАННЯ ГРАФІКІВ ЗАРЯДЖАННЯ</b>\n\n"
+        "Натисніть на розклад, який ви бажаєте видалити:"
+    )
+    try:
+        await call.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=get_delete_schedules_keyboard(),
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("sched_del:"))
+async def cb_sched_del(call: CallbackQuery):
+    sched_id = call.data.split(":")[1]
+    charge_controller.delete_schedule(sched_id)
+
+    if charge_controller.schedules:
+        try:
+            await call.message.edit_reply_markup(
+                reply_markup=get_delete_schedules_keyboard()
+            )
+        except Exception:
+            pass
+        await call.answer("🗑️ Графік видалено!")
+    else:
+        t = app_state.latest_telemetry
+        if t:
+            try:
+                await call.message.edit_text(
+                    format_charge_dashboard(t),
+                    parse_mode="HTML",
+                    reply_markup=get_charge_inline_keyboard(),
+                )
+            except Exception:
+                pass
+        await call.answer("Всі графіки видалено!", show_alert=True)
+
+
+# =========================================================================
+# FREE-FORM NATURAL TEXT SCHEDULE HANDLER
+# =========================================================================
+
+import re
+
+def parse_schedule_text(text: str, default_day: str = "today") -> tuple[str, str, str] | None:
+    cleaned = text.lower().strip()
+
+    # Detect day
+    day_type = default_day
+    if "завтра" in cleaned:
+        day_type = "tomorrow"
+    elif "сьогодні" in cleaned:
+        day_type = "today"
+    elif any(w in cleaned for w in ["щодня", "кожен день", "щоденно"]):
+        day_type = "daily"
+    elif any(w in cleaned for w in ["пн", "понеділ"]):
+        day_type = "monday"
+    elif any(w in cleaned for w in ["вт", "вівтор"]):
+        day_type = "tuesday"
+    elif any(w in cleaned for w in ["ср", "серед"]):
+        day_type = "wednesday"
+    elif any(w in cleaned for w in ["чт", "четвер"]):
+        day_type = "thursday"
+    elif any(w in cleaned for w in ["пт", "п'ятниц", "пятниц"]):
+        day_type = "friday"
+    elif any(w in cleaned for w in ["сб", "субот"]):
+        day_type = "saturday"
+    elif any(w in cleaned for w in ["нд", "неділ"]):
+        day_type = "sunday"
+
+    # Find time specifications
+    times = re.findall(r"\b(\d{1,2}(?::\d{2})?)\b", cleaned)
+    if len(times) >= 2:
+        def normalize_time(t_str: str) -> str:
+            if ":" in t_str:
+                parts = t_str.split(":", 1)
+                h, m = parts[0], parts[1]
+            else:
+                h, m = t_str, "00"
+            return f"{int(h):02d}:{int(m):02d}"
+
+        try:
+            start_t = normalize_time(times[0])
+            end_t = normalize_time(times[1])
+            sh, sm = map(int, start_t.split(":"))
+            eh, em = map(int, end_t.split(":"))
+            if 0 <= sh <= 23 and 0 <= sm <= 59 and 0 <= eh <= 23 and 0 <= em <= 59:
+                return day_type, start_t, end_t
+        except Exception:
+            return None
+
+    return None
+
+
+@router.message(F.text)
+async def handle_user_text(message: Message):
+    chat_id = message.chat.id
+    raw_text = message.text.strip()
+
+    # Skip known buttons
+    known_buttons = [
+        "⚡ Головна панель",
+        "🔋 Батареї (2 шт)",
+        "🔌 Заряд від мережі",
+        "📊 Енергобаланс",
+        "☀️ Сонячні панелі",
+        "🔔 Центр сповіщень",
+        "📱 Відкрити сайт",
+    ]
+    if raw_text in known_buttons:
+        return
+
+    pending_day = user_pending_schedule.get(chat_id, "today")
+    is_charge_cmd = any(w in raw_text.lower() for w in ["заряд", "графік", "розклад", "план", "час", "charge"])
+    is_pending = chat_id in user_pending_schedule
+
+    parsed = parse_schedule_text(raw_text, default_day=pending_day)
+    if parsed and (is_charge_cmd or is_pending or ":" in raw_text or len(raw_text.split()) == 2):
+        day_type, start_t, end_t = parsed
+        user_pending_schedule.pop(chat_id, None)
+        sched = charge_controller.add_schedule(day_type=day_type, start_time=start_t, end_time=end_t)
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="🔌 До керування зарядом", callback_data="tab_charge"),
+                    InlineKeyboardButton(text="⚡ Головна панель", callback_data="tab_main"),
+                ]
+            ]
+        )
+        await message.answer(
+            f"✅ <b>РОЗКЛАД ЗАРЯДЖАННЯ ЗБЕРЕЖЕНО!</b>\n\n"
+            f"📅 День: <b>{sched.day_label}</b>\n"
+            f"⏰ Час зарядки: <b>{sched.start_time} — {sched.end_time}</b>\n"
+            f"🎯 Цільовий рівень: <b>до {sched.target_soc:.0f}%</b>\n\n"
+            f"⚡ <i>Інвертор автоматично увімкне заряджання від 220В у вказаний час!</i>",
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+        return
+
+    if is_pending:
+        await message.answer(
+            "⚠️ Не вдалося розпізнати формат часу.\n"
+            "Надішліть час, наприклад: <code>14:00 16:30</code> або <code>02:00 - 05:00</code>.\n"
+            "Або виберіть готовий інтервал нижче:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="⏰ Обрати зі списку", callback_data=f"sched_day:{pending_day}")],
+                    [InlineKeyboardButton(text="❌ Скасувати", callback_data="tab_charge")],
+                ]
+            ),
+        )
+

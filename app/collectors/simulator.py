@@ -77,7 +77,22 @@ class TelemetrySimulator:
 
         grid_active = self.grid_online and not self.manual_blackout
 
-        if power_balance > 0:
+        is_force_charging = False
+        try:
+            from app.collectors.charge_controller import charge_controller
+            is_force_charging = bool(
+                charge_controller.is_force_charging
+                and grid_active
+                and current_soc < getattr(charge_controller, "force_charge_target_soc", 100.0)
+            )
+        except Exception:
+            pass
+
+        if is_force_charging:
+            battery_power = 2800.0  # Active charging from grid at ~2.8 kW
+            grid_power = max(0.0, load_power + battery_power - pv_total)
+            battery_status = "charging"
+        elif power_balance > 0:
             # Surplus power charges the battery
             if current_soc < 99.0:
                 battery_power = min(power_balance, 3000.0)  # Max charge rate ~3kW

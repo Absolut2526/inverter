@@ -12,6 +12,7 @@ from app.models import (
     SolarSystem,
     SystemTelemetry,
 )
+from app.state import app_state
 
 logger = logging.getLogger("deye_cloud")
 
@@ -30,6 +31,8 @@ class DeyeCloudClient:
         self._auto_station_id: Optional[int] = None
 
     def _get_client(self):
+        if not (self.app_id and self.app_secret and self.email and self.password):
+            return None
         if self._deye is None:
             try:
                 from deyecloud import DeyeCloud
@@ -44,6 +47,39 @@ class DeyeCloudClient:
                 logger.error(f"Failed to initialize DeyeCloud SDK: {e}", exc_info=True)
                 return None
         return self._deye
+
+    def discover_device_sn(self) -> Optional[str]:
+        """Discovers inverter SN from stations if not already resolved."""
+        if self.device_sn:
+            if not app_state.inverter_sn:
+                app_state.inverter_sn = self.device_sn
+            return self.device_sn
+        if self._auto_device_sn:
+            if not app_state.inverter_sn:
+                app_state.inverter_sn = self._auto_device_sn
+            return self._auto_device_sn
+        client = self._get_client()
+        if not client:
+            return None
+        try:
+            stations = list(client.station.list())
+            if stations:
+                first_st = stations[0]
+                self._auto_station_id = first_st.station_id
+                devices = list(first_st.devices())
+                if devices:
+                    dev_info = devices[0]
+                    sn = getattr(dev_info, "device_sn", None) or getattr(dev_info, "deviceSn", None)
+                    if isinstance(dev_info, dict):
+                        sn = dev_info.get("device_sn") or dev_info.get("deviceSn")
+                    if sn:
+                        self._auto_device_sn = str(sn)
+                        app_state.inverter_sn = str(sn)
+                        logger.info(f"Discovered Inverter SN: {self._auto_device_sn}")
+                        return self._auto_device_sn
+        except Exception as e:
+            logger.warning(f"Device discovery failed: {e}")
+        return None
 
     async def fetch_current_data(self) -> Optional[SystemTelemetry]:
         """Runs the blocking Deye Cloud fetch in a background thread."""
@@ -81,6 +117,8 @@ class DeyeCloudClient:
                 logger.warning(f"Station discovery error (non-fatal): {e}")
 
             target_sn = self.device_sn or self._auto_device_sn
+            if target_sn and not app_state.inverter_sn:
+                app_state.inverter_sn = str(target_sn)
 
             # 2. Fetch device telemetry
             if target_sn:

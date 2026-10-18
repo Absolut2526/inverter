@@ -41,6 +41,15 @@ async def post_telemetry(
     return {"status": "ok", "timestamp": payload.timestamp}
 
 
+from app.collectors.charge_controller import charge_controller, ChargeSchedule
+from pydantic import BaseModel
+
+class AddScheduleRequest(BaseModel):
+    day_type: str = "today"
+    start_time: str
+    end_time: str
+    target_soc: float = 100.0
+
 @router.post("/test/toggle-grid")
 async def test_toggle_grid():
     """Test helper to simulate blackout / grid restoration."""
@@ -60,3 +69,42 @@ async def test_toggle_grid():
         "status": "toggled",
         "grid_is_online": app_state.latest_telemetry.grid.is_online,
     }
+
+
+@router.get("/charge/schedules", response_model=List[ChargeSchedule])
+async def get_charge_schedules():
+    """Returns all active and saved charge schedules."""
+    return charge_controller.schedules
+
+
+@router.post("/charge/schedule", response_model=ChargeSchedule)
+async def create_charge_schedule(req: AddScheduleRequest):
+    """Creates a new battery charge schedule."""
+    return charge_controller.add_schedule(
+        day_type=req.day_type,
+        start_time=req.start_time,
+        end_time=req.end_time,
+        target_soc=req.target_soc,
+    )
+
+
+@router.delete("/charge/schedule/{sched_id}")
+async def remove_charge_schedule(sched_id: str):
+    """Deletes a charge schedule by ID."""
+    success = charge_controller.delete_schedule(sched_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"status": "deleted", "id": sched_id}
+
+
+@router.post("/charge/force-start")
+async def api_force_start_charge(target_soc: float = 100.0, hours: float | None = None):
+    """Manually triggers battery charging from grid."""
+    return await charge_controller.start_force_charge(target_soc=target_soc, duration_hours=hours)
+
+
+@router.post("/charge/force-stop")
+async def api_force_stop_charge():
+    """Manually stops grid charging and returns to Self-Use mode."""
+    return await charge_controller.stop_force_charge()
+

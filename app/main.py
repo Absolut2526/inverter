@@ -17,6 +17,7 @@ from app.bot.notifier import send_alert_to_subscribers
 from app.collectors.simulator import TelemetrySimulator
 from app.collectors.solarman_api import SolarmanApiClient
 from app.collectors.deye_cloud import DeyeCloudClient
+from app.collectors.charge_controller import charge_controller
 from app.config import settings
 from app.state import app_state
 
@@ -41,6 +42,10 @@ async def run_telemetry_loop():
     """Background polling loop for Deye telemetry."""
     simulator = TelemetrySimulator()
     deye_client = DeyeCloudClient() if (settings.DEYE_ENABLED and settings.is_deye_configured) else None
+    if deye_client:
+        app_state.active_deye_client = deye_client
+        if settings.DEYE_DEVICE_SN:
+            app_state.inverter_sn = settings.DEYE_DEVICE_SN
     solarman = SolarmanApiClient() if (settings.SOLARMAN_ENABLED and settings.is_solarman_configured) else None
 
     # Pre-populate some history points for the chart
@@ -127,6 +132,9 @@ async def lifespan(app: FastAPI):
     # 2. Start telemetry collector
     collector_task = asyncio.create_task(run_telemetry_loop())
 
+    # 3. Start charge scheduler background loop
+    charge_controller.start_scheduler_loop()
+
     yield
 
     # Clean shutdown
@@ -135,6 +143,10 @@ async def lifespan(app: FastAPI):
         collector_task.cancel()
     if polling_task:
         polling_task.cancel()
+    if charge_controller._schedule_loop_task:
+        charge_controller._schedule_loop_task.cancel()
+    if charge_controller._monitor_task:
+        charge_controller._monitor_task.cancel()
     if bot_instance:
         await bot_instance.session.close()
 

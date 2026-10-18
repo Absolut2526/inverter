@@ -20,6 +20,10 @@ class AppState:
         # Telegram subscribers for alerts
         self.subscriber_chat_ids: Set[int] = set()
 
+        # Deye Cloud client and detected Inverter SN
+        self.active_deye_client: Optional[Any] = None
+        self.inverter_sn: Optional[str] = None
+
         # State transition tracking for alerts
         self.last_grid_online: Optional[bool] = None
         self.alerted_batt_low_20: bool = False
